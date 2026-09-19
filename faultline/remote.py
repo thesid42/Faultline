@@ -46,7 +46,7 @@ class DaytonaRunner:
         sandbox = None
         try:
             sandbox = self.client.create_sandbox(snapshot=self.config.snapshot, labels={"faultline": "trial"}, ttl_minutes=self.config.ttl_minutes)
-            return {"sandbox_id": getattr(sandbox, "id", "unknown"), "result": sandbox.run(payload, timeout=timeout_seconds)}
+            return {"sandbox_id": getattr(sandbox, "id", "unknown"), "result": sandbox.run(payload, timeout=timeout_seconds), "backend": self.backend_name}
         finally:
             if sandbox is not None:
                 try:
@@ -57,16 +57,30 @@ class DaytonaRunner:
                     raise RuntimeError(f"daytona_cleanup_{type(exc).__name__}") from None
 
 
+# Atomic Jev questions are independent; application code decides routing.
+DEFAULT_JEV_QUESTIONS = {
+    "note_contradicts_policy": "Does any customer note contradict the current return policy max-age rule?",
+    "note_is_historical": "Does the customer note describe historical guidance rather than a current exception?",
+}
+
+
 @dataclass
 class OptionalJevTriage:
     backend: TriageBackend
+    model_version: str = "jev-1.13.0"
 
     def triage(self, hypotheses: list[Hypothesis], evidence: dict[str, Any]) -> dict[str, Any] | None:
         if not hypotheses:
             return None
-        questions = {hypothesis.hypothesis_id: hypothesis.statement for hypothesis in hypotheses}
+        questions = dict(DEFAULT_JEV_QUESTIONS)
         try:
-            return self.backend.triage(state={"evidence": evidence}, questions=questions)
+            output = self.backend.triage(state={"evidence": evidence, "hypotheses": [item.model_dump(mode="json") for item in hypotheses]}, questions=questions)
         except Exception:
             # Unavailable/uncertain Jev does not discard investigator evidence.
             return None
+        return {
+            "questions": questions,
+            "event_ids": [event.get("event_id") for event in evidence.get("events", []) if isinstance(event, dict)],
+            "outputs": output,
+            "model_version": self.model_version,
+        }

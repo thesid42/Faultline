@@ -93,7 +93,7 @@ class OpenRouterInvestigatorController(OpenRouterProvider):
 
     def next_action(self, observations: list[dict[str, Any]]) -> ControllerAction:
         data = self._request(
-            [{"role": "system", "content": "Return one JSON command: kind is inspect_trace|triage_hypotheses|run_experiment|probe_case|check_suite|propose_tests|finish. For run_experiment include operator policy_notes|remove_note|order_age and value. Never emit code."}, {"role": "user", "content": json.dumps({"observations": observations[-8:]}, sort_keys=True)}],
+            [{"role": "system", "content": "Return one JSON command: kind is inspect_trace|triage_hypotheses|run_experiment|probe_case|check_suite|propose_tests|finish. For run_experiment include operator policy_notes|remove_note|unrelated_note|order_age and value. Never emit code."}, {"role": "user", "content": json.dumps({"observations": observations[-8:]}, sort_keys=True)}],
             {"type": "json_object"},
         )
         return ControllerAction.model_validate(data)

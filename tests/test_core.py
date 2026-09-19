@@ -96,10 +96,29 @@ def test_activation_receipt_and_invalid_exclusion() -> None:
 
 def test_adaptive_controller_branches_and_terminates() -> None:
     tools = Tools(LocalTrialRunner(ReturnDesk(), FixedClock()), BudgetState())
-    results = AdaptiveInvestigator(tools, BranchingStubController()).investigate(incident(), max_steps=4)
+    results = AdaptiveInvestigator(tools, BranchingStubController()).investigate(incident(), max_steps=12)
     assert results
-    assert tools.budget.investigator_calls < 4
+    assert any(result.activation.operator == "remove_note" for result in results)
+    assert any(result.activation.operator == "unrelated_note" for result in results)
+    assert any(item.get("kind") == "hypotheses" for item in tools.observations)
+    assert any(item.get("kind") == "suite_check" for item in tools.observations)
+    assert any(item.get("kind") == "propose_tests" for item in tools.observations)
+    assert tools.budget.investigator_calls <= 12
+    assert tools.stop_reason == "controller_finished"
+    memory = next(item for item in tools.hypotheses if item.predicates.get("family") == "memory")
+    assert memory.status == "supported"
     assert all(result.status == "completed" for result in results)
+
+
+def test_unrelated_note_control_keeps_obsolete_memory() -> None:
+    runner = LocalTrialRunner(ReturnDesk(), FixedClock())
+    result = runner.run(ExperimentSpec(hypothesis_id="h", name="control", operator="unrelated_note", value="Customer prefers phone contact.", repetitions=1), incident())[0]
+    assert result.activation.activated
+    assert result.status == "completed"
+    assert result.observed_violation is True
+    assert result.run is not None
+    assert any("30-day" in note for note in result.run.scenario.notes)
+
 
 
 class SlowProvider:

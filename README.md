@@ -41,7 +41,8 @@ streamlit run faultline/ui.py
 ```
 
 The case-file UI reads persisted SQLite/JSON artifacts only. Refreshing it does
-not schedule model calls.
+not schedule model calls. The view shows incident status, component timeline,
+hypotheses, experiment outcomes, coverage, held-out validation, and proposals.
 
 After reviewing the displayed proposal, export is an explicit action:
 
@@ -56,9 +57,12 @@ If the case file contains multiple saved proposals, also pass
 
 The local runner is the reference implementation. Daytona and Jev are exposed
 as optional interfaces in this slice; remote connectivity is deferred. Paid
-work is bounded by 40 target trials, 12 investigator/generator calls, 120
-seconds per trial, and the shared $15 / $20 soft and hard ceiling.
+work is bounded by 40 target trials, 12 investigator/generator calls, one
+optional Jev triage request, 120 seconds per trial, and the shared $15 / $20
+soft and hard ceiling.
 
-The live CLI currently permits an explicitly budgeted single target run. It
-fails closed before adaptive paid trials until the remote runner can reconcile
-child-process usage and ambiguous timeout charges into the parent budget.
+The offline smoke path exercises the full typed tool loop against a
+deterministic fake target (`evidence_origin=simulated`), including an
+unrelated-note control, coverage classification, held-out checks, and a
+persisted `CaseFile`. Live adaptive investigation remains deferred until the
+remote runner can reconcile child-process usage into the parent budget.

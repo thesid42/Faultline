@@ -19,6 +19,13 @@ from .clock import FixedClock
 from .models import ActivationReceipt, ExperimentResult, ExperimentSpec, RunRecord, RunStatus, Scenario
 from .return_desk import ReturnDesk
 
+_OBSOLETE_MARKERS = ("30-day", "30 day", "all orders")
+
+
+def _is_obsolete_note(note: str) -> bool:
+    lowered = note.lower()
+    return any(marker in lowered for marker in _OBSOLETE_MARKERS)
+
 
 def _worker(target: ReturnDesk, scenario: Scenario, output: Any) -> None:
     """Top-level worker so Windows spawn can start a trusted child process."""
@@ -90,7 +97,7 @@ class LocalTrialRunner:
         before_json = json.dumps(scenario.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
         before = hashlib.sha256(before_json.encode()).hexdigest()
         trial = deepcopy(scenario)
-        if spec.operator in ("policy_notes", "remove_note") and not isinstance(spec.value, str):
+        if spec.operator in ("policy_notes", "remove_note", "unrelated_note") and not isinstance(spec.value, str):
             return trial, before, before, False, "note operator requires a string value"
         if spec.operator == "policy_notes":
             # This is a supported tool-result replacement, represented as the
@@ -100,6 +107,16 @@ class LocalTrialRunner:
             if spec.value not in trial.notes:
                 return trial, before, before, False, "selected note was not present"
             trial.notes = [note for note in trial.notes if note != spec.value]
+        elif spec.operator == "unrelated_note":
+            # Control edit: change a non-policy note while leaving obsolete notes
+            # intact. If the memory hypothesis is correct, the failure persists.
+            obsolete = [note for note in trial.notes if _is_obsolete_note(note)]
+            non_obsolete = [note for note in trial.notes if not _is_obsolete_note(note)]
+            if not obsolete and not non_obsolete:
+                return trial, before, before, False, "unrelated_note requires existing notes"
+            if spec.value in trial.notes and not non_obsolete:
+                return trial, before, before, False, "unrelated note already present"
+            trial.notes = obsolete + [spec.value]
         elif spec.operator == "order_age":
             if not isinstance(spec.value, int) or isinstance(spec.value, bool) or spec.value < 0:
                 return trial, before, before, False, "order_age requires a non-negative integer"

@@ -56,7 +56,7 @@ class ControllerAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["inspect_trace", "triage_hypotheses", "run_experiment", "probe_case", "check_suite", "propose_tests", "finish"]
-    operator: Literal["policy_notes", "remove_note", "order_age"] | None = None
+    operator: Literal["policy_notes", "remove_note", "unrelated_note", "order_age"] | None = None
     value: str | int | None = None
 
 
@@ -113,7 +113,7 @@ class ExperimentSpec(BaseModel):
     experiment_id: str = Field(default_factory=lambda: uuid4().hex)
     hypothesis_id: str
     name: str
-    operator: Literal["policy_notes", "remove_note", "order_age"]
+    operator: Literal["policy_notes", "remove_note", "unrelated_note", "order_age"]
     value: str | int | None = None
     repetitions: int = Field(default=3, ge=1, le=40)
     timeout_seconds: int = Field(default=120, gt=0, le=120)
@@ -182,11 +182,13 @@ class BudgetState(BaseModel):
 
     target_trials: int = 0
     investigator_calls: int = 0
+    jev_calls: int = 0
     paid_calls: int = 0
     reserved_usd: float = 0.0
     spent_usd: float = 0.0
     max_target_trials: int = 40
     max_investigator_calls: int = 12
+    max_jev_calls: int = 1
     soft_ceiling_usd: float = 15.0
     hard_ceiling_usd: float = 20.0
 
@@ -195,6 +197,9 @@ class BudgetState(BaseModel):
 
     def can_investigate(self, count: int = 1) -> bool:
         return count > 0 and self.investigator_calls + count <= self.max_investigator_calls
+
+    def can_jev(self, count: int = 1) -> bool:
+        return count > 0 and self.jev_calls + count <= self.max_jev_calls
 
     def reserve(self, estimate: float, *, paid: bool = True) -> None:
         if estimate < 0 or not math.isfinite(estimate):
@@ -234,12 +239,19 @@ class Incident(BaseModel):
 
 class CaseFile(BaseModel):
     case_id: str = Field(default_factory=lambda: uuid4().hex)
+    status: Literal["queued", "investigating", "complete", "inconclusive"] = "queued"
+    stop_reason: str = ""
     incident: Incident | None = None
     scenarios: list[Scenario] = Field(default_factory=list)
     runs: list[RunRecord] = Field(default_factory=list)
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     experiments: list[ExperimentSpec] = Field(default_factory=list)
     experiment_results: list[ExperimentResult] = Field(default_factory=list)
+    observations: list[dict[str, Any]] = Field(default_factory=list)
     coverage: list[CoverageAssessment] = Field(default_factory=list)
+    held_out_validation: list[dict[str, Any]] = Field(default_factory=list)
     proposal: RegressionProposal | None = None
+    triage: dict[str, Any] | None = None
     budget: BudgetState = Field(default_factory=BudgetState)
+    backend: str = "local-subprocess"
+    evidence_origin: EvidenceOrigin = EvidenceOrigin.SIMULATED
