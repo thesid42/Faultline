@@ -138,9 +138,15 @@ export function useCase(caseId: string | undefined): CaseDetailValue {
   return { caseFile, loading, refreshing, error, refresh }
 }
 
-export function formatCaseLabel(value: string | null | undefined) {
-  if (!value) return 'Untitled case'
-  return value.replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+export function shortCaseId(value: string | null | undefined, length = 8) {
+  if (!value) return '—'
+  return value.length <= length ? value : `${value.slice(0, length)}…`
+}
+
+export function formatCaseLabel(value: string | null | undefined, fallbackId?: string | null) {
+  if (value) return value.replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+  if (fallbackId) return 'Unnamed profile'
+  return 'Untitled case'
 }
 
 export function formatDate(value: unknown) {

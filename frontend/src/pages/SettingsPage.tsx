@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
 import { capabilityOption, getCapabilities, type Capabilities } from '../api/investigations'
+import { shortCaseId } from '../context/CaseContext'
 
 function configuredLabel(value: boolean | undefined) {
   if (value === true) return 'Configured · connectivity not verified'
@@ -38,7 +39,7 @@ export function SettingsPage() {
   const liveConfigured = capabilities?.openrouter_configured ?? capabilities?.live_available
   const jevConfigured = capabilities?.jev_configured ?? capabilities?.jev_available
 
-  return <div>
+  return <div className="page-shell">
     <PageHeader title="Settings" subtitle="Runtime integration status from the local capabilities API." />
     {loading ? <div className="panel empty-state">Loading integration capabilities…</div> : null}
     {!loading && error ? <div className="panel empty-state"><strong>Capabilities unavailable.</strong><br />{error}</div> : null}
@@ -47,8 +48,8 @@ export function SettingsPage() {
         <div className="section-head"><div><h2 className="section-title" style={{ margin: 0 }}>Local runtime</h2><p className="muted">The UI reads capabilities and case evidence; it never receives provider secrets.</p></div><StatusBadge label="API connected" tone="success" /></div>
         <div className="case-meta-grid">
           <div><span className="metric-label">Execution backend</span><strong>{capabilities.execution_backend ?? 'local-subprocess'}</strong></div>
-          <div><span className="metric-label">Fixed target model</span><strong className="mono">{capabilities.target_model ?? 'not advertised'}</strong></div>
-          <div><span className="metric-label">Active job</span><strong className="mono">{capabilities.active_case_id ?? 'none'}</strong></div>
+          <div><span className="metric-label">Fixed target model</span><strong className="mono cell-id" title={capabilities.target_model ?? ''}>{capabilities.target_model ?? 'not advertised'}</strong></div>
+          <div><span className="metric-label">Active job</span><strong className="mono">{capabilities.active_case_id ? shortCaseId(capabilities.active_case_id) : 'none'}</strong></div>
           <div><span className="metric-label">Daytona</span><StatusBadge label={configuredLabel(capabilities.daytona_configured)} tone={configuredTone(capabilities.daytona_configured)} /></div>
         </div>
       </section>

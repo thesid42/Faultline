@@ -3,7 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
 import { CaseEvidenceSummary } from '../components/CaseEvidenceSummary'
-import { displayValue, formatCaseLabel, formatDate, useCase } from '../context/CaseContext'
+import { displayValue, formatCaseLabel, formatDate, shortCaseId, useCase } from '../context/CaseContext'
 
 const tabs = ['overview', 'trace', 'hypotheses', 'experiments', 'coverage', 'regression'] as const
 type Tab = (typeof tabs)[number]
@@ -52,7 +52,7 @@ export function InvestigationPage() {
   const proposal = caseFile?.proposal ? row(caseFile.proposal) : null
   const proposalReviewed = Boolean(proposal?.reviewed === true && typeof proposal.approval_digest === 'string' && proposal.approval_digest && proposal.approval_digest === proposal.digest)
   const selectedEventRow = events[selectedEvent] ?? events[0]
-  const title = formatCaseLabel(caseFile?.demo_profile ?? id)
+  const title = formatCaseLabel(caseFile?.demo_profile, id)
   const status = String(caseFile?.status ?? 'unknown')
   const latestObservation = observations[observations.length - 1]
   const stage = typeof latestObservation?.stage === 'string' ? latestObservation.stage : typeof latestObservation?.kind === 'string' ? latestObservation.kind : 'not recorded'
@@ -69,11 +69,19 @@ export function InvestigationPage() {
   const setTab = (tab: Tab) => setSearchParams({ tab })
 
   return (
-    <div>
-      <PageHeader title={`Case ${id ?? '—'}`} subtitle={title} actions={<StatusBadge label={status} tone={tone(status)} />}>
+    <div className="page-shell">
+      <PageHeader
+        title={<>Case <span className="mono">{shortCaseId(id)}</span></>}
+        subtitle={title}
+        actions={<StatusBadge label={status} tone={tone(status)} />}
+      >
         <div className="inv-header-meta">
-          <span>{caseFile?.evidence_origin ?? 'origin unknown'}</span><span>·</span>
-          <span>{caseFile?.backend ?? 'backend unknown'}</span><span>·</span>
+          <span className="mono" title={id}>{id}</span>
+          <span>·</span>
+          <span>{caseFile?.evidence_origin ?? 'origin unknown'}</span>
+          <span>·</span>
+          <span>{caseFile?.backend ?? 'backend unknown'}</span>
+          <span>·</span>
           <span>{refreshing ? 'refreshing…' : 'live API snapshot'}</span>
         </div>
       </PageHeader>
@@ -139,7 +147,7 @@ export function InvestigationPage() {
 
           {activeTab === 'experiments' ? <div className="panel">
             <div className="section-head"><h2 className="section-title" style={{ margin: 0 }}>Experiments</h2><button type="button" className="btn btn-secondary" disabled title="Run experiments from the Faultline CLI.">Run from CLI</button></div>
-            {experiments.length === 0 ? <p className="muted">No experiment results recorded.</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Trial</th><th>Configuration</th><th>Status</th><th>Violation</th><th>Origin</th></tr></thead><tbody>{experiments.map((experiment) => <tr key={String(experiment.trial_id)}><td className="mono">{String(experiment.trial_id)}</td><td>{String(experiment.configuration_id ?? '—')}</td><td><StatusBadge label={String(experiment.status ?? 'unknown')} tone={tone(String(experiment.status ?? 'unknown'))} /></td><td>{experiment.observed_violation === true ? 'Yes' : experiment.observed_violation === false ? 'No' : 'Unknown'}</td><td>{String(experiment.evidence_origin ?? 'unknown')}</td></tr>)}</tbody></table></div>}
+            {experiments.length === 0 ? <p className="muted">No experiment results recorded.</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Trial</th><th>Configuration</th><th>Status</th><th>Violation</th><th>Origin</th></tr></thead><tbody>{experiments.map((experiment) => <tr key={String(experiment.trial_id)}><td><span className="mono cell-id" title={String(experiment.trial_id)}>{shortCaseId(String(experiment.trial_id), 10)}</span></td><td>{String(experiment.configuration_id ?? '—')}</td><td><StatusBadge label={String(experiment.status ?? 'unknown')} tone={tone(String(experiment.status ?? 'unknown'))} /></td><td>{experiment.observed_violation === true ? 'Yes' : experiment.observed_violation === false ? 'No' : 'Unknown'}</td><td>{String(experiment.evidence_origin ?? 'unknown')}</td></tr>)}</tbody></table></div>}
           </div> : null}
 
           {activeTab === 'coverage' ? <div className="panel"><h2 className="section-title">Coverage assessments</h2>{coverage.length === 0 ? <p className="muted">No coverage assessment recorded.</p> : <div className="card-grid">{coverage.map((item, index) => <article className="nested-card" key={String(item.assessment_id ?? index)}><div className="section-head"><strong>{String(item.condition ?? 'condition')}</strong><StatusBadge label={String(item.grader_observed ?? 'unknown')} tone={tone(String(item.grader_observed ?? 'unknown'))} /></div><p className="muted">Original suite: {String(item.original_suite ?? 'unknown')}</p><p>{String(item.notes ?? 'No notes recorded.')}</p><p className="mono">Detected {String(item.detected_count ?? 0)} · Missed {String(item.missed_count ?? 0)}</p></article>)}</div>}</div> : null}

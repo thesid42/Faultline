@@ -21,7 +21,7 @@ export function HomePage() {
   const recent = useMemo(() => [...cases].reverse(), [cases])
 
   return (
-    <div className="tab-panel">
+    <div className="tab-panel page-shell">
       <section className="hero-card">
         <FaultlineHeroVisual />
         <div className="hero-avatar" aria-hidden>FL</div>
@@ -46,7 +46,7 @@ export function HomePage() {
       {!loading && !error && cases.length === 0 ? <StateMessage>No persisted case files yet. Run a Faultline investigation, then refresh this view.</StateMessage> : null}
 
       {!loading && !error && cases.length > 0 ? <>
-        <div className="metrics-grid">
+        <div className="metrics-grid metrics-grid-4">
           <div className="metric-card accent-blue"><div className="metric-label">Cases in store</div><div className="metric-value">{cases.length}</div><div className="metric-footer"><span className="metric-delta">Current snapshot</span></div></div>
           <div className="metric-card accent-purple"><div className="metric-label">Active investigations</div><div className="metric-value">{activeCount}</div><div className="metric-footer"><span className="metric-delta">Queued or running</span></div></div>
           <div className="metric-card accent-green"><div className="metric-label">Completed cases</div><div className="metric-value">{completeCount}</div><div className="metric-footer"><span className="metric-delta">Persisted outcomes</span></div></div>
@@ -54,7 +54,7 @@ export function HomePage() {
         </div>
         <div className="section-head"><h2 className="section-title" style={{ margin: 0 }}>Recent cases</h2><button type="button" className="link-btn" onClick={() => navigate('/incidents')}>View all →</button></div>
         <IncidentTable incidents={recent.slice(0, 3)} />
-        {latest ? <p className="muted" style={{ marginTop: 14 }}>{refreshing ? 'Refreshing… ' : ''}Latest profile: {formatCaseLabel(latest.profile)}</p> : null}
+        {latest ? <p className="muted page-footnote">{refreshing ? 'Refreshing… ' : ''}Latest: {formatCaseLabel(latest.profile, latest.caseid)}</p> : null}
       </> : null}
       <NewInvestigationDialog open={dialogOpen} onClose={() => setDialogOpen(false)} />
     </div>

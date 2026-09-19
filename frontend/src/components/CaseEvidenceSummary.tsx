@@ -29,9 +29,8 @@ export function CaseEvidenceSummary({ caseFile }: CaseEvidenceSummaryProps) {
           <h2 className="section-title" style={{ margin: 0 }}>Persisted evidence</h2>
           <p className="muted" style={{ margin: '4px 0 0' }}>Counts and limits are read from this case file; no progress is inferred.</p>
         </div>
-        <span className="mono">{caseFile.evidence_origin ?? 'origin unknown'} · {caseFile.backend ?? 'backend unknown'}</span>
       </div>
-      <div className="metrics-grid">
+      <div className="metrics-grid metrics-grid-3">
         <div className="metric-card accent-blue"><div className="metric-label">Target trials</div><div className="metric-value">{numberValue(budget.target_trials)}</div></div>
         <div className="metric-card accent-purple"><div className="metric-label">Investigator calls</div><div className="metric-value">{numberValue(budget.investigator_calls)}</div></div>
         <div className="metric-card accent-pink"><div className="metric-label">Optional Jev calls</div><div className="metric-value">{numberValue(budget.jev_calls)}</div></div>
