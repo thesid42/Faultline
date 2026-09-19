@@ -38,6 +38,14 @@ The controlled incident:
 - A customer requests a refund for a 21-day-old order.
 - The agent may follow the obsolete note and issue an invalid refund.
 
+The offline showcase exposes three named profiles through the same orchestration
+contract: `memory-conflict` (obsolete note precedence), `amount-unit` (minor vs
+major refund units), and `duplicate-refund` (idempotency/attempt handling).
+Each profile has distinct stream, suite, and fresh held-out IDs. The profile
+name is case metadata only; it is never passed to the investigator as a
+ground-truth diagnosis. A model that does not expose the seeded failure, or a
+worker/budget/timeout error, produces an explicit inconclusive case.
+
 The simulated refund service validates identifiers, amounts, and idempotency, but deliberately delegates eligibility to the agent. This disclosed design permits the failure; no real payments are involved.
 
 A separate deterministic checker evaluates the final ledger against reviewed policy fixtures. The investigator cannot edit this checker or its authoritative rules.
@@ -94,7 +102,7 @@ Only synthetic fixtures and trusted demo code go into Daytona. Keep credentials 
 | Case-file interface | Streamlit |
 | Verification and test export | Deterministic Python checks, existing grader adapter, pytest |
 
-Models: [free Nemotron Nano](https://openrouter.ai/nvidia/nemotron-3-nano-30b-a3b:free) for ReturnDesk; [DeepSeek V4.1 Flash](https://openrouter.ai/deepseek/deepseek-v4.1-flash) for the investigator, with [Qwen3.8 Flash](https://openrouter.ai/qwen/qwen3.8-flash) as a manually configured alternative. The investigator choices offer approximately 1M context, but receive selected evidence rather than every stored trace.
+Models: [free Nemotron Nano Omni](https://openrouter.ai/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free) for ReturnDesk; [DeepSeek V4.1 Flash](https://openrouter.ai/deepseek/deepseek-v4.1-flash) for the investigator. Provider and model routing are pinned with no automatic fallback or retry. The investigator receives selected evidence rather than every stored trace. A separate, explicitly selected rehearsal route is `meta-llama/llama-3.1-8b-instruct` through Groq; it is not an automatic fallback.
 
 Pin model configurations during comparisons. Provider availability and quotas are checked before running; no silent paid fallback or model switching.
 
@@ -121,7 +129,7 @@ Measurement rules:
 - Keep invalid experiments, infrastructure errors, and no-observed-violation results separate. Do not claim overall production coverage.
 - Derive expected test outcomes from reviewed application rules, not the investigator's opinion.
 
-Bound each investigation to 40 target-agent trials, 12 investigator/generator calls, and one optional Jev triage request, with a 120-second trial limit. Apply a shared $15 soft stop and $20 scheduling ceiling for all paid model work, including Jev and in-flight usage. Daytona uses its separate credit allowance, with bounded sandbox concurrency and lifecycle cleanup.
+Bound each investigation to 40 target-agent trials, 12 investigator/generator calls, and one optional Jev triage request, with a 120-second trial limit. All live calls share a parent-owned persistent $10 ceiling, a $2 automatic cap requiring explicit approval beyond it, and a $1 per-case cap, including in-flight usage. Daytona uses its separate credit allowance, with bounded sandbox concurrency and lifecycle cleanup.
 
 **Excluded:** production auto-fixes, automatic commits, arbitrary uploaded code, multiple investigator agents, live sandbox forks, general-purpose production monitoring integrations, and a universal zero-configuration adapter.
 

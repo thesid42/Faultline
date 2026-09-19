@@ -56,8 +56,13 @@ class ControllerAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["inspect_trace", "triage_hypotheses", "run_experiment", "probe_case", "check_suite", "propose_tests", "finish"]
-    operator: Literal["policy_notes", "remove_note", "unrelated_note", "order_age"] | None = None
+    operator: Literal["baseline", "policy_notes", "remove_note", "unrelated_note", "order_age", "refund_api_unit", "delivery_attempts"] | None = None
     value: str | int | None = None
+    source: Literal["incident", "control", "held_out"] = "incident"
+    hypothesis_id: str | None = None
+    rationale: str = ""
+    configuration_id: str = "default"
+    fixture_partition: str = "main"
 
 
 class Scenario(BaseModel):
@@ -71,6 +76,8 @@ class Scenario(BaseModel):
     policy_version: str = "v1"
     notes: list[str] = Field(default_factory=list)
     requested_action: Literal["refund", "escalate"] = "refund"
+    refund_api_unit: Literal["major", "minor"] = "major"
+    delivery_attempts: int = Field(default=1, ge=1, le=3)
     expected_eligible: bool | None = None
     control: bool = False
 
@@ -79,6 +86,9 @@ class RunRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     run_id: str = Field(default_factory=lambda: uuid4().hex)
+    source_run_id: str | None = None
+    configuration_id: str = "default"
+    fixture_partition: str = "main"
     scenario: Scenario
     status: RunStatus = RunStatus.COMPLETED
     events: list[Event] = Field(default_factory=list)
@@ -94,6 +104,9 @@ class RunRecord(BaseModel):
     evidence_origin: EvidenceOrigin = EvidenceOrigin.SIMULATED
     created_at: datetime = Field(default_factory=utc_now)
     trace_digest: str = ""
+    tool_grants: list[dict[str, Any]] = Field(default_factory=list)
+    raw_grants: list[dict[str, Any]] = Field(default_factory=list)
+    activation_receipts: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class Hypothesis(BaseModel):
@@ -113,8 +126,13 @@ class ExperimentSpec(BaseModel):
     experiment_id: str = Field(default_factory=lambda: uuid4().hex)
     hypothesis_id: str
     name: str
-    operator: Literal["policy_notes", "remove_note", "unrelated_note", "order_age"]
+    operator: Literal["baseline", "policy_notes", "remove_note", "unrelated_note", "order_age", "refund_api_unit", "delivery_attempts"]
     value: str | int | None = None
+    source_scenario_id: str | None = None
+    source_run_id: str | None = None
+    source_role: Literal["incident", "control", "held_out"] = "incident"
+    configuration_id: str = "default"
+    fixture_partition: str = "main"
     repetitions: int = Field(default=3, ge=1, le=40)
     timeout_seconds: int = Field(default=120, gt=0, le=120)
     rationale: str = ""
@@ -127,6 +145,8 @@ class ActivationReceipt(BaseModel):
     trial_id: str
     activated: bool
     operator: str
+    source_scenario_id: str | None = None
+    configuration_id: str = "default"
     before_digest: str
     after_digest: str
     message: str = ""
@@ -139,6 +159,9 @@ class ExperimentResult(BaseModel):
     trial_id: str = Field(default_factory=lambda: uuid4().hex)
     experiment_id: str
     scenario_id: str
+    source_run_id: str | None = None
+    configuration_id: str = "default"
+    fixture_partition: str = "main"
     repetition: int = 1
     activation: ActivationReceipt
     status: Literal["completed", "excluded", "invalid", "infrastructure_error"] = "completed"
@@ -189,17 +212,25 @@ class BudgetState(BaseModel):
     max_target_trials: int = 40
     max_investigator_calls: int = 12
     max_jev_calls: int = 1
-    soft_ceiling_usd: float = 15.0
-    hard_ceiling_usd: float = 20.0
+    soft_ceiling_usd: float = 2.0
+    hard_ceiling_usd: float = 10.0
+    max_case_seconds: int = Field(default=600, gt=0)
+    started_at: datetime = Field(default_factory=utc_now)
+
+    def deadline_expired(self) -> bool:
+        started = self.started_at
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        return (utc_now() - started).total_seconds() >= self.max_case_seconds
 
     def can_target_trial(self, count: int = 1) -> bool:
-        return count > 0 and self.target_trials + count <= self.max_target_trials
+        return count > 0 and not self.deadline_expired() and self.target_trials + count <= self.max_target_trials
 
     def can_investigate(self, count: int = 1) -> bool:
-        return count > 0 and self.investigator_calls + count <= self.max_investigator_calls
+        return count > 0 and not self.deadline_expired() and self.investigator_calls + count <= self.max_investigator_calls
 
     def can_jev(self, count: int = 1) -> bool:
-        return count > 0 and self.jev_calls + count <= self.max_jev_calls
+        return count > 0 and not self.deadline_expired() and self.jev_calls + count <= self.max_jev_calls
 
     def reserve(self, estimate: float, *, paid: bool = True) -> None:
         if estimate < 0 or not math.isfinite(estimate):
@@ -233,15 +264,18 @@ class Incident(BaseModel):
 
     incident_id: str = Field(default_factory=lambda: uuid4().hex)
     run_id: str
+    source_run_id: str | None = None
     violation_digest: str
     status: Literal["queued", "investigating", "complete", "inconclusive"] = "queued"
 
 
 class CaseFile(BaseModel):
     case_id: str = Field(default_factory=lambda: uuid4().hex)
+    demo_profile: str | None = None
     status: Literal["queued", "investigating", "complete", "inconclusive"] = "queued"
     stop_reason: str = ""
     incident: Incident | None = None
+    source_run_id: str | None = None
     scenarios: list[Scenario] = Field(default_factory=list)
     runs: list[RunRecord] = Field(default_factory=list)
     hypotheses: list[Hypothesis] = Field(default_factory=list)

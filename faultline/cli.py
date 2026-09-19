@@ -3,106 +3,30 @@ from __future__ import annotations
 import argparse
 import json
 
-from .clock import FixedClock
-from .coverage import assess_coverage, condition_matches_scenario
-from .export import approve, export_proposal, prepare_proposal
-from .incidents import IncidentQueue
-from .investigator import AdaptiveInvestigator, BranchingStubController, Tools
-from .models import BudgetState, ExperimentSpec, RegressionProposal
-from .return_desk import ReturnDesk
-from .scenarios import default_scenarios, held_out, incident, legitimate_control, original_suite
+from .export import approve, export_proposal
+from .models import CaseFile, RegressionProposal
 from .storage import ArtifactStore
-from .trials import LocalTrialRunner
+from .workflow import run_demo
+
+PROFILE_CHOICES = ("memory-conflict", "amount-unit", "duplicate-refund", "all")
 
 
-def _grader_observations(results: list) -> list[dict[str, object]]:
-    """Join independent checker outcomes to the memory-conflict condition.
-
-    The reviewed RuleChecker detects invalid refunds; the original suite simply
-    omits the conflicting-memory scenario. Observations stay explicit so an
-    unmatched or incomplete trial cannot prove a grader miss.
-    """
-    observations: list[dict[str, object]] = []
-    for result in results:
-        if result.status != "completed" or not result.activation.activated or not result.run or result.observed_violation is not True:
-            continue
-        if condition_matches_scenario(result.run.scenario, "memory_conflict") is not True:
-            continue
-        observations.append({"trial_id": result.trial_id, "run_id": result.run.run_id, "condition": "memory_conflict", "detected": True, "grader_version": "rule-checker-v1"})
-    return observations
+def smoke(db: str = "results/faultline.sqlite3", profile: str = "memory-conflict") -> dict[str, object]:
+    """Run the complete deterministic local slice."""
+    names = PROFILE_CHOICES[:-1] if profile == "all" else (profile,)
+    return {"profiles": [run_demo(live=False, backend="local", profile=name, db=db).as_dict() for name in names]} if profile == "all" else run_demo(live=False, backend="local", profile=profile, db=db).as_dict()
 
 
-def _validate_held_out(target: ReturnDesk) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    for scenario in held_out():
-        run = target.run(scenario)
-        expected = target.checker.expected_eligible(scenario)
-        rows.append({"order_id": scenario.order_id, "expected_eligible": expected, "checker_passed": run.checker_passed, "action": None if run.agent_action is None else run.agent_action.kind, "held_out": True})
-    return rows
+def run_live(target_model: str, investigator_model: str | None = None, profile: str = "memory-conflict") -> dict[str, object]:
+    """Compatibility alias for the complete explicitly live workflow."""
+    return run_demo(live=True, backend="local", profile=profile, target_model=target_model, investigator_model=investigator_model).as_dict()
 
 
-def smoke(db: str = "results/faultline.sqlite3") -> dict[str, object]:
-    """Run the deterministic local slice; all evidence is explicitly simulated."""
-    target = ReturnDesk()
-    fixtures = default_scenarios()
-    suite = original_suite()
-    runs = [target.run(scenario) for scenario in fixtures]
-    suite_runs = [target.run(scenario) for scenario in suite]
-    queue = IncidentQueue()
-    incident_record = queue.enqueue(next(run for run in runs if run.scenario.order_id == "ORD-INCIDENT-21"))
-    if incident_record:
-        incident_record.status = "investigating"
-    budget = BudgetState(target_trials=len(runs) + len(suite_runs))
-    tools = Tools(LocalTrialRunner(target, FixedClock()), budget)
-    investigator = AdaptiveInvestigator(tools, BranchingStubController())
-    investigator.investigate(incident(), max_steps=12, control_scenario=legitimate_control())
-
-    # Suspect arm keeps the obsolete note path; reviewed-good replaces notes
-    # with current policy. Default three repetitions retain raw trial rows.
-    stale_config = ExperimentSpec(hypothesis_id="note", name="suspect configuration", operator="policy_notes", value="A 30-day window applies to this customer", repetitions=3)
-    reviewed_config = ExperimentSpec(hypothesis_id="note", name="reviewed-good configuration", operator="policy_notes", value="Refunds are allowed up to 14 days.", repetitions=3)
-    suspect = tools.run_experiment(stale_config, incident()) + tools.run_experiment(stale_config, legitimate_control())
-    reviewed_good = tools.run_experiment(reviewed_config, incident()) + tools.run_experiment(reviewed_config, legitimate_control())
-    tests = tools.propose_tests(suspect=suspect, reviewed_good=reviewed_good)
-    proposal = prepare_proposal("ReturnDesk conflicting-memory boundary", "A stale note exposes an invalid refund while a qualifying control remains valid.", tests, [result.trial_id for result in suspect + reviewed_good])
-    candidate_conditions = {"order_age<=14", "customer_note", "memory_conflict"}
-    original_conditions = {condition for condition in candidate_conditions if any(condition_matches_scenario(scenario, condition) is True for scenario in suite)}
-    coverage = assess_coverage(original_conditions=original_conditions, existing_grader_conditions={"order_age<=14"}, discovered_conditions={"memory_conflict"}, suspect=suspect, reviewed_good=reviewed_good, grader_observations=_grader_observations(suspect + reviewed_good + tools.results))
-    held_out_rows = _validate_held_out(target)
-    status = "inconclusive" if tools.stop_reason and tools.stop_reason not in {"controller_finished"} else "complete"
-    if incident_record:
-        incident_record.status = status
-    case = tools.to_case_file(incident=incident_record, scenarios=fixtures + suite, coverage=coverage, proposal=proposal, held_out_validation=held_out_rows, status=status)
-    with ArtifactStore(db) as store:
-        store.put("case_file", case, case.case_id)
-        for run in runs + suite_runs + tools.runs:
-            store.put("run", run, run.run_id)
-        if incident_record:
-            store.put("incident", incident_record, incident_record.incident_id)
-        for hypothesis in tools.hypotheses:
-            store.put("hypothesis", hypothesis, hypothesis.hypothesis_id)
-        for result in tools.results:
-            store.put("experiment_result", result, result.trial_id)
-        for item in coverage:
-            store.put("coverage", item, item.assessment_id)
-        store.put("proposal", proposal, proposal.proposal_id)
-    return {"runs": len(runs) + len(suite_runs) + len(tools.runs), "incidents": len(queue.all()), "experiments": len(tools.results), "hypotheses": len(tools.hypotheses), "proposal_digest": proposal.digest, "case_status": status, "coverage": [{item.condition: item.original_suite} for item in coverage], "held_out": held_out_rows, "evidence_origin": "simulated", "db": db}
-
-
-def run_live(target_model: str, investigator_model: str | None = None) -> dict[str, object]:
-    from .adapters import load_configured_target
-
-    if investigator_model:
-        raise RuntimeError("live adaptive trials require a budget-coordinated remote runner; no HTTP call was dispatched")
-    # Explicit target configuration is required; no fake fallback is allowed.
-    target = load_configured_target(target_model)
-    target_budget = target.provider.budget
-    if not target_budget.can_target_trial():
-        raise RuntimeError("target trial budget exhausted")
-    target_budget.target_trials += 1
-    run = target.run(incident())
-    result: dict[str, object] = {"run_id": run.run_id, "checker_passed": run.checker_passed, "evidence_origin": run.evidence_origin.value, "target_model": target_model, "investigator_model": investigator_model}
-    return result
+def demo(*, live: bool = False, backend: str = "local", use_jev: bool = False, approve_budget: bool = False, profile: str = "memory-conflict", db: str = "results/faultline.sqlite3", ledger: str | None = None, target_model: str | None = None, investigator_model: str | None = None) -> dict[str, object]:
+    """Run one full demo; live model calls require ``--live`` explicitly."""
+    names = PROFILE_CHOICES[:-1] if profile == "all" else (profile,)
+    outputs = [run_demo(live=live, backend=backend, profile=name, jev=use_jev, approve_budget=approve_budget, db=db, ledger_path=ledger, target_model=target_model, investigator_model=investigator_model).as_dict() for name in names]
+    return {"profiles": outputs} if profile == "all" else outputs[0]
 
 
 def approve_export(db: str, directory: str, approver: str, proposal_id: str | None = None) -> dict[str, str]:
@@ -121,6 +45,15 @@ def approve_export(db: str, directory: str, approver: str, proposal_id: str | No
         approval = approve(proposal, approver)
         test_path, json_path = export_proposal(proposal, approval, directory)
         store.put("proposal", proposal, proposal.proposal_id)
+        # Keep the case-file review boundary coherent: UI reads the linked
+        # proposal embedded in the case, not an unrelated proposal row.
+        for payload in store.list("case_file"):
+            linked = payload.get("proposal") if isinstance(payload, dict) else None
+            if not isinstance(linked, dict) or linked.get("proposal_id") != proposal.proposal_id:
+                continue
+            case = CaseFile.model_validate(payload)
+            case.proposal = proposal
+            store.put("case_file", case, case.case_id)
     return {"proposal_id": proposal.proposal_id, "digest": approval.proposal_digest, "pytest": str(test_path), "json": str(json_path)}
 
 
@@ -129,6 +62,17 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     smoke_parser = sub.add_parser("smoke", help="offline deterministic local vertical slice")
     smoke_parser.add_argument("--db", default="results/faultline.sqlite3")
+    smoke_parser.add_argument("--profile", choices=PROFILE_CHOICES, default="memory-conflict")
+    demo_parser = sub.add_parser("demo", help="complete incident-to-reviewed-regression workflow")
+    demo_parser.add_argument("--live", action="store_true", help="use the configured OpenRouter target and investigator")
+    demo_parser.add_argument("--backend", choices=("local", "daytona"), default="local")
+    demo_parser.add_argument("--jev", action="store_true", help="enable one optional TypeSafe Jev triage call")
+    demo_parser.add_argument("--approve-budget", action="store_true", help="explicitly approve spend above the automatic $2 cap")
+    demo_parser.add_argument("--db", default="results/faultline.sqlite3")
+    demo_parser.add_argument("--ledger", help="shared persistent budget ledger (defaults to results/budget.sqlite3)")
+    demo_parser.add_argument("--target-model")
+    demo_parser.add_argument("--investigator-model")
+    demo_parser.add_argument("--profile", choices=PROFILE_CHOICES, default="memory-conflict")
     live_parser = sub.add_parser("run", help="one explicitly configured live target run")
     live_parser.add_argument("--target-model", required=True)
     live_parser.add_argument("--investigator-model")
@@ -139,7 +83,9 @@ def main(argv: list[str] | None = None) -> int:
     export_parser.add_argument("--proposal-id")
     args = parser.parse_args(argv)
     if args.command == "smoke":
-        print(json.dumps(smoke(args.db), indent=2))
+        print(json.dumps(smoke(args.db, args.profile), indent=2))
+    elif args.command == "demo":
+        print(json.dumps(demo(live=args.live, backend=args.backend, use_jev=args.jev, approve_budget=args.approve_budget, profile=args.profile, db=args.db, ledger=args.ledger, target_model=args.target_model, investigator_model=args.investigator_model), indent=2))
     elif args.command == "run":
         print(json.dumps(run_live(args.target_model, args.investigator_model), indent=2))
     else:

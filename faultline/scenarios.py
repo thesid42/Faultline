@@ -30,7 +30,10 @@ def original_suite() -> list[Scenario]:
 
 
 def held_out() -> list[Scenario]:
-    return [Scenario(order_id="ORD-HELDOUT-15", customer_id="CUS-H1", order_age_days=15, amount=35, notes=["Refunds are allowed up to 14 days."], expected_eligible=False), Scenario(order_id="ORD-HELDOUT-7", customer_id="CUS-H2", order_age_days=7, amount=35, notes=["Refunds are allowed up to 14 days."], expected_eligible=True, control=True)]
+    # Separate IDs prevent memorizing the original incident.  The first row
+    # withholds the conflicting stale note; the second is a legitimate current
+    # policy control with no obsolete note.
+    return [Scenario(order_id="ORD-HELDOUT-CONFLICT", customer_id="CUS-H1", order_age_days=21, amount=35, notes=[OBSOLETE_NOTE, PREFERENCE_NOTE], expected_eligible=False), Scenario(order_id="ORD-HELDOUT-CURRENT", customer_id="CUS-H2", order_age_days=7, amount=35, notes=["Refunds are allowed up to 14 days.", PREFERENCE_NOTE], expected_eligible=True, control=True)]
 
 
 def default_scenarios() -> list[Scenario]:

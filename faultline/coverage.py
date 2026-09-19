@@ -14,6 +14,10 @@ def condition_matches_scenario(scenario: Scenario, condition: str) -> bool | Non
     """Shared reviewed predicates used for suite presence and trial grouping."""
     if condition == "memory_conflict":
         return scenario.requested_action == "refund" and 14 < scenario.order_age_days <= 30 and any(marker in note.lower() for note in scenario.notes for marker in OBSOLETE_NOTE_MARKERS)
+    if condition == "refund_minor_units":
+        return scenario.requested_action == "refund" and scenario.refund_api_unit == "minor"
+    if condition == "redelivery":
+        return scenario.requested_action == "refund" and scenario.delivery_attempts > 1
     if condition == "customer_note":
         return scenario.requested_action == "refund" and bool(scenario.notes)
     if condition == "order_age<=14":

@@ -1,68 +1,105 @@
 # Faultline
 
-Faultline is a small auditable harness for investigating agent failures and
-turning reviewed findings into executable regression tests. The local slice
-exercises a ReturnDesk refund agent, an independent checker, an adaptive
-investigator, two-axis coverage, and a human-approved export gate.
+Faultline is an auditable incident-to-regression workflow for the synthetic
+ReturnDesk refund agent. It streams application traces, uses an independent
+ledger checker to queue a failed case, lets one typed investigator choose
+bounded interventions, joins scenario/grader coverage, and writes a
+human-approved regression proposal.
 
-## Quick start
+## Quick start (Windows PowerShell)
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\activate
-python -m pip install -e ".[all]"
-faultline smoke --db results/faultline.sqlite3
-pytest
+.\.venv\Scripts\python.exe -m pip install -e ".[all,live]"
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m faultline.cli smoke
 ```
 
-The smoke command writes JSON artifacts inside a SQLite case file under
-`results/`. Fake observations are
-explicitly labelled `evidence_origin=simulated`; the smoke path never calls a
-remote model and uses a deterministic branching controller. Live autonomous
-investigation is deferred.
+`smoke` is fully offline and labels every run `evidence_origin=simulated`.
+It persists the case under `results/faultline.sqlite3`, including the raw
+timeline, hypotheses, interventions, coverage, held-out checks, and digest.
 
-## Real model configuration
-
-Set `OPENROUTER_API_KEY` and configure the target model explicitly. The local
-slice permits only an explicitly selected `:free` model with price `0`; paid
-model execution is deferred until provider pricing/usage reconciliation is
-verified. There is no silent fake fallback.
+The default `memory-conflict` profile is joined by two independently seeded
+profiles that use the same typed workflow and limits:
 
 ```powershell
-$env:OPENROUTER_API_KEY = "..."
-$env:FAULTLINE_TARGET_PRICE_USD = "0"
-faultline run --target-model nvidia/nemotron-3-nano-30b-a3b:free
+.\.venv\Scripts\python.exe -m faultline.cli smoke --profile amount-unit
+.\.venv\Scripts\python.exe -m faultline.cli smoke --profile duplicate-refund
+.\.venv\Scripts\python.exe -m faultline.cli smoke --profile all
 ```
 
-## UI
+The seeded demo faults are disclosed inputs, not diagnoses: the model must
+still produce a real observed violation and the independent checker must
+confirm it. Safe model output, malformed output, or an upstream/boundary
+failure is retained and reported as `inconclusive`.
+
+## Live demo
+
+Copy `.env.example` to `.env`, set credentials, then run one explicit live
+workflow:
 
 ```powershell
-streamlit run faultline/ui.py
+.\.venv\Scripts\python.exe -m faultline.cli demo --live --backend local
+.\.venv\Scripts\python.exe -m faultline.cli demo --live --backend daytona --jev
 ```
 
-The case-file UI reads persisted SQLite/JSON artifacts only. Refreshing it does
-not schedule model calls. The view shows incident status, component timeline,
-hypotheses, experiment outcomes, coverage, held-out validation, and proposals.
+The target is pinned to `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`
+by default; the investigator is pinned to `deepseek/deepseek-v4.1-flash`.
+Provider routing has no fallback or retry. All live calls share
+`results/budget.sqlite3` by default: global ceiling $10, automatic cap $2,
+per-case cap $1, max 40 target trials, 12 investigator calls, and one
+optional Jev request. The current application and provider receipts, not saved
+output, are the evidence. Use `--approve-budget` only when you explicitly
+authorize spend above the automatic $2 cap.
 
-After reviewing the displayed proposal, export is an explicit action:
+`--backend daytona` requires a configured Daytona worker and reports an
+infrastructure/inconclusive case when that boundary is unavailable; it never
+silently substitutes fake evidence. A rerun starts a new case; this MVP does
+not claim checkpoint resume or production monitoring.
+The free target is conservatively paced at one dispatch every 3.1 seconds, so
+run one live demo at a time. For an explicitly capped rehearsal, select the
+registered Groq route (with its own budget reservation):
 
 ```powershell
-faultline approve-export --db results/faultline.sqlite3 --approver alice --directory artifacts/regression
+.\.venv\Scripts\python.exe -m faultline.cli demo --live --backend local `
+  --target-model meta-llama/llama-3.1-8b-instruct
 ```
 
-If the case file contains multiple saved proposals, also pass
-`--proposal-id <id>`; export fails closed when selection is ambiguous.
+This is a rehearsal configuration, not a claim that a live provider run has
+passed; it still requires the configured credential and persistent limits.
 
-## Honest limits
+## Review and export
 
-The local runner is the reference implementation. Daytona and Jev are exposed
-as optional interfaces in this slice; remote connectivity is deferred. Paid
-work is bounded by 40 target trials, 12 investigator/generator calls, one
-optional Jev triage request, 120 seconds per trial, and the shared $15 / $20
-soft and hard ceiling.
+Review the persisted proposal, then explicitly bind your approval to its
+current digest and export executable pytest:
 
-The offline smoke path exercises the full typed tool loop against a
-deterministic fake target (`evidence_origin=simulated`), including an
-unrelated-note control, coverage classification, held-out checks, and a
-persisted `CaseFile`. Live adaptive investigation remains deferred until the
-remote runner can reconcile child-process usage into the parent budget.
+```powershell
+.\.venv\Scripts\python.exe -m faultline.cli approve-export `
+  --db results/faultline.sqlite3 --approver alice `
+  --directory artifacts/regression
+```
+
+The generated test invokes the configured current application
+(`FAULTLINE_LIVE_TARGET`) and skips rather than passing when no live target is
+configured. It never asserts stored model output or a model-supplied
+diagnosis.
+
+## Architecture and limits
+
+`workflow.py` owns orchestration; `investigator.py` owns typed controller
+tools; `trials.py` validates supported interventions in isolated repetitions;
+`coverage.py` joins independent checker evidence; `storage.py` and `session.py`
+persist checkpointed audit state; `export.py` enforces digest-bound approval.
+
+The demo is one synthetic application and one investigator. It does not patch
+production, run arbitrary model-generated code, or claim production-wide
+coverage. Timeouts, malformed model JSON, missing usage, budget exhaustion,
+and unavailable remote infrastructure remain explicit `inconclusive` outcomes.
+Checkpoints are for audit/UI progress only: this MVP does not resume a partial
+case, and each rerun starts a new stable case identity.
+
+The optional read-only case view is:
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run faultline/ui.py
+```
