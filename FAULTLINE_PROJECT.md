@@ -99,7 +99,7 @@ Only synthetic fixtures and trusted demo code go into Daytona. Keep credentials 
 | Model access | HTTPX with a thin OpenRouter client; TypeSafe Python SDK for Jev |
 | Experiment infrastructure | Daytona Python SDK; local subprocess fallback |
 | State and artifacts | SQLite and JSON |
-| Case-file interface | Streamlit |
+| Case-file interface | Read-only Python HTTP API plus React/Vite viewer; Streamlit remains a local legacy view |
 | Verification and test export | Deterministic Python checks, existing grader adapter, pytest |
 
 Models: [free Nemotron Nano Omni](https://openrouter.ai/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free) for ReturnDesk; [DeepSeek V4.1 Flash](https://openrouter.ai/deepseek/deepseek-v4.1-flash) for the investigator. Provider and model routing are pinned with no automatic fallback or retry. The investigator receives selected evidence rather than every stored trace. A separate, explicitly selected rehearsal route is `meta-llama/llama-3.1-8b-instruct` through Groq; it is not an automatic fallback.
@@ -114,7 +114,7 @@ Send selected trace excerpts within its documented 32K state-plus-longest-questi
 
 ## 7. MVP boundaries and measurement rules
 
-**Included:** one investigator with optional Jev triage, one application adapter, one demonstrated failure family, adaptive experiments, coverage-gap assessment, Daytona execution, and human-reviewed test export.
+**Included:** one investigator with optional Jev triage, one application adapter, three seeded fault profiles (`memory-conflict`, `amount-unit`, and `duplicate-refund`), adaptive experiments, coverage-gap assessment, Daytona execution, and human-reviewed test export.
 
 The initial intervention set supports replacing a selected policy/notes tool result, removing an irrelevant note, and varying order age within reviewed fixtures. These are implemented operators with validated parameters; the investigator chooses where and when to apply them. It cannot rewrite agent code or invent new executable operators.
 
@@ -147,5 +147,20 @@ The case file shows:
 - Proposed regression tests with validation evidence and an approval/export action.
 
 A successful showcase demonstrates an observed failure, evidence supporting its mechanism, a genuine gap in the original suite, and an exported test pair that distinguishes invalid from legitimate behavior. A completed investigation may instead be inconclusive; it must never manufacture the showcase result.
+
+The recorded `amount-unit` rehearsal used the capped Groq Llama route and
+completed with 37 target trials, 10 investigator calls, one Jev request, six
+original-suite passes, a supported hypothesis, three repetitions per matched
+matrix cell, and four held-out validations. This confirms that profile's case
+database only; the other profiles are not claimed as live-passed. The
+`memory-conflict` profile is confirmed offline, while its live Llama run is
+inconclusive because the model did not confirm the 21-day versus 14-day numeric
+comparison.
+The separately recorded `duplicate-refund` rehearsal also completed live with
+36 target trials, 8 investigator calls, one Jev request, and four held-out
+validations; its redelivery condition was missing from the original suite and
+detected by the independent checker. Two profiles are therefore live-confirmed
+in recorded case databases; `memory-conflict` remains explicitly unconfirmed
+live.
 
 The product does not change production behavior. Its deliverable is an auditable investigation and reviewed tests that the organization can add to its existing release process.

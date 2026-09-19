@@ -21,6 +21,7 @@ from .incidents import IncidentQueue
 from .investigator import AdaptiveInvestigator, BranchingStubController, InvestigatorController, Tools
 from .models import BudgetState, CaseFile, EvidenceOrigin, Event, ExperimentResult, ExperimentSpec, Incident, RunRecord, RunStatus, Scenario
 from .execution import TargetExecutionBoundary, validate_execution_result
+from .live import LLAMA_31_8B_INSTRUCT
 from .worker import OneCallWorker
 from .remote import DaytonaConfig, DaytonaRunner, OptionalJevTriage, TypeSafeJevBackend
 from .return_desk import ReturnDesk
@@ -421,10 +422,11 @@ def run_demo(*, live: bool = False, backend: str = "local", jev: bool = False, a
         selected_ledger = Path(ledger_path).resolve() if ledger_path is not None else canonical_ledger.resolve()
         if ledger_path is not None and selected_ledger != canonical_ledger.resolve() and not injected_live_components:
             raise ValueError("live production runs must use the canonical results/budget.sqlite3 ledger")
-        ledger = BudgetLedger(selected_ledger, ceiling_usd=min(10.0, config.max_total_usd), automation_cap_usd=2.0, case_cap_usd=1.0)
+        target_model = target_model or config.openrouter_model
+        worker_caps = {"worker": 0.10} if target_model == LLAMA_31_8B_INSTRUCT else None
+        ledger = BudgetLedger(selected_ledger, ceiling_usd=min(10.0, config.max_total_usd), automation_cap_usd=2.0, case_cap_usd=1.0, category_caps_usd=worker_caps)
         if approve_budget:
             ledger.approve_automation(True)
-        target_model = target_model or config.openrouter_model
         investigator_model = investigator_model or "deepseek/deepseek-v4.1-flash"
         target = target or load_configured_target(target_model, budget=ledger, case_id=stable_case_id)
         controller = controller or load_configured_investigator(investigator_model, budget=ledger, case_id=stable_case_id)

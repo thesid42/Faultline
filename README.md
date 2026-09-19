@@ -38,9 +38,47 @@ failure is retained and reported as `inconclusive`.
 Copy `.env.example` to `.env`, set credentials, then run one explicit live
 workflow:
 
+### React investigation UI (read-only case data)
+
+The React UI reads persisted case files through the local read-only API. Start
+the API against the case database you want to review, then start Vite in a
+second PowerShell window. The UI refreshes persisted cases and investigation
+evidence only; it cannot start trials, approve a proposal, or mutate SQLite.
+Refreshing the page rereads the persisted live cases; it performs no model
+calls. Use the CLI against the same `--db` path for a new case or explicit
+human approval/export.
+
+The API requires the selected SQLite case database to exist. On a fresh clone,
+create an offline simulated case first (no key or network required), or run
+the live rehearsal below before starting the API:
+
 ```powershell
-.\.venv\Scripts\python.exe -m faultline.cli demo --live --backend local
-.\.venv\Scripts\python.exe -m faultline.cli demo --live --backend daytona --jev
+.\.venv\Scripts\python.exe -m faultline.cli smoke --profile all `
+  --db results/llama-live-validation.sqlite3
+```
+
+Recorded live costs and case databases are local artifacts and are not
+committed.
+
+```powershell
+.\.venv\Scripts\python.exe -m faultline.api --db results/llama-live-validation.sqlite3
+```
+
+In a second PowerShell window:
+
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+### Recorded capped rehearsal
+
+```powershell
+.\.venv\Scripts\python.exe -m faultline.cli demo --live --backend local `
+  --profile amount-unit --jev `
+  --target-model meta-llama/llama-3.1-8b-instruct `
+  --db results/llama-live-validation.sqlite3
 ```
 
 The target is pinned to `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`
@@ -57,16 +95,20 @@ infrastructure/inconclusive case when that boundary is unavailable; it never
 silently substitutes fake evidence. A rerun starts a new case; this MVP does
 not claim checkpoint resume or production monitoring.
 The free target is conservatively paced at one dispatch every 3.1 seconds, so
-run one live demo at a time. For an explicitly capped rehearsal, select the
-registered Groq route (with its own budget reservation):
+run one live demo at a time. The recorded capped rehearsal command above uses
+the registered Groq route and its persistent worker cap.
 
-```powershell
-.\.venv\Scripts\python.exe -m faultline.cli demo --live --backend local `
-  --target-model meta-llama/llama-3.1-8b-instruct
-```
-
-This is a rehearsal configuration, not a claim that a live provider run has
-passed; it still requires the configured credential and persistent limits.
+Recorded result for that database: 37 target trials, 10 investigator calls,
+one Jev request, six original-suite passes, a supported hypothesis, three
+repetitions per matched matrix cell, and four held-out validations. This does
+not claim the other profiles passed live. Memory-conflict is confirmed offline;
+its live Llama run remains inconclusive because the model did not confirm the
+21-day versus 14-day numeric comparison.
+The separately recorded `duplicate-refund` rehearsal also completed live with
+36 target trials, 8 investigator calls, one Jev request, and four held-out
+validations; its redelivery condition was missing from the original suite and
+detected by the independent checker. Thus two profiles are live-confirmed;
+memory-conflict remains explicitly unconfirmed live.
 
 ## Review and export
 
