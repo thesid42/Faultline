@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
 import { CaseEvidenceSummary } from '../components/CaseEvidenceSummary'
-import { displayValue, formatCaseLabel, formatDate, shortCaseId, useCase } from '../context/CaseContext'
+import { displayValue, formatDate, shortCaseId, useCase } from '../context/CaseContext'
+import { friendlyCaseTitle, summarizeInvestigation, type InvestigationSummary } from '../lib/investigationSummary'
 
 const tabs = ['overview', 'trace', 'hypotheses', 'experiments', 'coverage', 'regression'] as const
 type Tab = (typeof tabs)[number]
@@ -30,6 +31,96 @@ function LoadingOrError({ loading, error }: { loading: boolean; error: string | 
   return null
 }
 
+const familyTitles: Record<string, string> = {
+  policy: 'Refund policy',
+  policy_retrieval: 'Refund policy',
+  memory: 'Customer notes',
+  memory_conflict: 'Customer notes',
+  amount_units: 'Dollars and cents',
+  idempotency: 'Repeated refunds',
+  execution: 'Refund execution',
+}
+
+function hypothesisFamily(hypothesis: Row): string {
+  const family = String(row(hypothesis.predicates).family ?? '').toLowerCase()
+  return familyTitles[family] ?? 'Possible explanation'
+}
+
+function hypothesisState(status: string, complete: boolean) {
+  if (status === 'supported') return { label: complete ? 'Supported by tests' : 'Preliminary support', tone: complete ? 'success' as const : 'warning' as const, icon: '✓', className: complete ? 'supported' : 'preliminary' }
+  if (status === 'unknown') return { label: 'Not confirmed', tone: 'warning' as const, icon: '?', className: 'unknown' }
+  if (status === 'open') return { label: 'Not yet tested', tone: 'info' as const, icon: '○', className: 'open' }
+  if (status === 'rejected' || status === 'refuted') return { label: 'Not supported', tone: 'failure' as const, icon: '×', className: 'rejected' }
+  return { label: 'Unknown status', tone: 'info' as const, icon: '?', className: 'neutral' }
+}
+
+function hypothesisRationale(hypothesis: Row, status: string): string {
+  const rationale = String(hypothesis.rationale ?? '').trim()
+  if (status === 'unknown' && /(incomplete|contradictory)/i.test(rationale)) return 'The checks did not provide enough consistent evidence.'
+  return rationale || 'No testing result has been recorded yet.'
+}
+
+function HypothesesPanel({ hypotheses, complete }: { hypotheses: Row[]; complete: boolean }) {
+  const ordered = hypotheses.map((hypothesis, index) => ({ hypothesis, index })).sort((left, right) => {
+    const leftSupported = String(left.hypothesis.status ?? '').toLowerCase() === 'supported' ? 0 : 1
+    const rightSupported = String(right.hypothesis.status ?? '').toLowerCase() === 'supported' ? 0 : 1
+    return leftSupported - rightSupported || left.index - right.index
+  })
+  return <div className="panel">
+    <h2 className="section-title">Possible causes</h2>
+    <p className="muted">These are ideas the investigation tested. Highlighted results are recorded evidence, not proof of a universal cause.</p>
+    {ordered.length === 0 ? <p className="muted">No possible causes have been recorded yet.</p> : <div className="hypothesis-card-grid">{ordered.map(({ hypothesis }) => {
+      const status = String(hypothesis.status ?? 'unknown').toLowerCase()
+      const state = hypothesisState(status, complete)
+      const statement = String(hypothesis.statement ?? 'No explanation recorded.')
+      const rationale = hypothesisRationale(hypothesis, status)
+      return <article className={`hypothesis-card ${state.className}`} key={String(hypothesis.hypothesis_id ?? statement)}>
+        <div className="hypothesis-card-header">
+          <span className="hypothesis-icon" aria-hidden="true">{state.icon}</span>
+          <div className="hypothesis-card-heading"><h3>{hypothesisFamily(hypothesis)}</h3><span className="muted">Possible explanation</span></div>
+          <StatusBadge label={state.label} tone={state.tone} />
+        </div>
+        <p className="hypothesis-statement">{statement}</p>
+        <div className="hypothesis-testing"><strong>What testing showed</strong><p>{rationale}</p></div>
+        <details className="hypothesis-technical"><summary>Technical evidence</summary><pre className="raw-json">{displayValue({ hypothesis_id: hypothesis.hypothesis_id, statement: hypothesis.statement, rationale: hypothesis.rationale, predicates: hypothesis.predicates })}</pre></details>
+      </article>
+    })}</div>}
+  </div>
+}
+
+function ResultsView({ summary, onReviewProposal }: { summary: InvestigationSummary; onReviewProposal: () => void }) {
+  return (
+    <div className="overview-grid" aria-label="Investigation results">
+      <div className="panel result-tile result-observation">
+        <div className="result-tile-label"><span aria-hidden="true">◉</span> Observation</div>
+        <h2 className="section-title">What happened?</h2>
+        <p><strong>{summary.happened}</strong></p>
+        <p className="muted" style={{ marginBottom: 0 }}>{summary.happenedDetail}</p>
+      </div>
+      <div className="panel result-tile result-finding">
+        <div className="result-tile-label"><span aria-hidden="true">✦</span> Finding</div>
+        <h2 className="section-title">What did we find?</h2>
+        <div className="stack-list">
+          {summary.findings.map((finding, index) => <div key={`${finding}-${index}`}>{finding}</div>)}
+        </div>
+      </div>
+      <div className="panel result-tile result-next">
+        <div className="result-tile-label"><span aria-hidden="true">→</span> Next step</div>
+        <h2 className="section-title">What should I do next?</h2>
+        <ol style={{ margin: 0, paddingLeft: 20 }}>
+          {summary.nextSteps.map((step, index) => <li key={`${step}-${index}`} style={{ marginBottom: 8 }}>{step.startsWith('Review the suggested test') ? <><span>{step}</span> <button type="button" className="btn btn-secondary" onClick={onReviewProposal}>Review suggested test</button></> : step}</li>)}
+        </ol>
+      </div>
+      <div className="panel result-tile result-status">
+        <div className="result-tile-label"><span aria-hidden="true">◷</span> Run status</div>
+        <h2 className="section-title">Progress</h2>
+        <p>{summary.progress}</p>
+        <p className="muted" style={{ marginBottom: 0 }}>{summary.evidenceNote}</p>
+      </div>
+    </div>
+  )
+}
+
 export function InvestigationPage() {
   const { id } = useParams()
   const { caseFile, loading, refreshing, error } = useCase(id)
@@ -37,6 +128,10 @@ export function InvestigationPage() {
   const [selectedEvent, setSelectedEvent] = useState(0)
   const requestedTab = searchParams.get('tab')
   const activeTab: Tab = requestedTab && tabs.includes(requestedTab as Tab) ? requestedTab as Tab : 'overview'
+  const [technicalOpen, setTechnicalOpen] = useState(Boolean(requestedTab))
+  useEffect(() => {
+    if (requestedTab) setTechnicalOpen(true)
+  }, [requestedTab])
 
   const incident = row(caseFile?.incident)
   const runs = rows(caseFile?.runs)
@@ -51,9 +146,11 @@ export function InvestigationPage() {
   const budget = row(caseFile?.budget)
   const proposal = caseFile?.proposal ? row(caseFile.proposal) : null
   const proposalReviewed = Boolean(proposal?.reviewed === true && typeof proposal.approval_digest === 'string' && proposal.approval_digest && proposal.approval_digest === proposal.digest)
+  const summary = caseFile ? summarizeInvestigation(caseFile) : null
   const selectedEventRow = events[selectedEvent] ?? events[0]
-  const title = formatCaseLabel(caseFile?.demo_profile, id)
   const status = String(caseFile?.status ?? 'unknown')
+  const friendlyTitle = friendlyCaseTitle(caseFile?.demo_profile)
+  const headerStatus = status === 'complete' ? 'Finished' : status === 'investigating' ? 'Running' : status === 'queued' ? 'Waiting' : status === 'inconclusive' ? 'Needs attention' : 'Status unavailable'
   const latestObservation = observations[observations.length - 1]
   const stage = typeof latestObservation?.stage === 'string' ? latestObservation.stage : typeof latestObservation?.kind === 'string' ? latestObservation.kind : 'not recorded'
   const stageStatus = typeof latestObservation?.status === 'string' ? latestObservation.status : null
@@ -66,35 +163,37 @@ export function InvestigationPage() {
     }, {})
   }, [experiments])
 
-  const setTab = (tab: Tab) => setSearchParams({ tab })
+  const setTab = (tab: Tab) => {
+    setTechnicalOpen(true)
+    setSearchParams({ tab })
+  }
 
   return (
     <div className="page-shell">
       <PageHeader
-        title={<>Case <span className="mono">{shortCaseId(id)}</span></>}
-        subtitle={title}
-        actions={<StatusBadge label={status} tone={tone(status)} />}
+        title={friendlyTitle}
+        subtitle={headerStatus}
+        actions={<StatusBadge label={headerStatus} tone={tone(status)} />}
       >
         <div className="inv-header-meta">
-          <span className="mono" title={id}>{id}</span>
+          <span>{caseFile?.evidence_origin === 'simulated' ? 'Practice evidence' : caseFile?.evidence_origin === 'live' ? 'Live evidence' : 'Evidence origin unknown'}</span>
           <span>·</span>
-          <span>{caseFile?.evidence_origin ?? 'origin unknown'}</span>
-          <span>·</span>
-          <span>{caseFile?.backend ?? 'backend unknown'}</span>
-          <span>·</span>
-          <span>{refreshing ? 'refreshing…' : 'live API snapshot'}</span>
+          <span>{refreshing ? 'refreshing…' : 'Updates automatically'}</span>
         </div>
       </PageHeader>
 
       <LoadingOrError loading={loading} error={error} />
       {!loading && !error && !caseFile ? <div className="panel empty-state">This case was not found.</div> : null}
       {!loading && !error && caseFile ? <>
-        <CaseEvidenceSummary caseFile={caseFile} />
-        <div className="tabs">
-          {tabs.map((tab) => <button key={tab} type="button" className={`tab${activeTab === tab ? ' active' : ''}`} onClick={() => setTab(tab)}>{tab.charAt(0).toUpperCase() + tab.slice(1)}</button>)}
-        </div>
+        {summary ? <ResultsView summary={summary} onReviewProposal={() => setTab('regression')} /> : null}
+        <details className="panel" open={technicalOpen} onToggle={(event) => setTechnicalOpen(event.currentTarget.open)} style={{ marginTop: 16 }}>
+          <summary className="section-title" style={{ cursor: 'pointer' }}>Technical details</summary>
+          <CaseEvidenceSummary caseFile={caseFile} />
+          <div className="tabs">
+            {tabs.map((tab) => <button key={tab} type="button" className={`tab${activeTab === tab ? ' active' : ''}`} onClick={() => setTab(tab)}>{tab === 'hypotheses' ? 'Possible causes' : tab.charAt(0).toUpperCase() + tab.slice(1)}</button>)}
+          </div>
 
-        <div className="tab-panel">
+          <div className="tab-panel">
           {activeTab === 'overview' ? <div className="overview-grid">
             <div className="panel">
               <h2 className="section-title">Observed case</h2>
@@ -140,10 +239,7 @@ export function InvestigationPage() {
             </div>
           </div> : null}
 
-          {activeTab === 'hypotheses' ? <div className="panel">
-            <h2 className="section-title">Hypotheses</h2>
-            {hypotheses.length === 0 ? <p className="muted">No hypotheses recorded.</p> : <div className="card-grid">{hypotheses.map((hypothesis) => { const state = String(hypothesis.status ?? 'unknown'); return <article className="panel nested-card" key={String(hypothesis.hypothesis_id)}><div className="section-head"><strong>{String(hypothesis.hypothesis_id)}</strong><StatusBadge label={state} tone={tone(state)} /></div><p>{String(hypothesis.statement ?? 'No statement recorded.')}</p><p className="muted">{String(hypothesis.rationale ?? 'No rationale recorded.')}</p><div className="mono">Predicates: {displayValue(hypothesis.predicates)}</div></article> })}</div>}
-          </div> : null}
+          {activeTab === 'hypotheses' ? <HypothesesPanel hypotheses={hypotheses} complete={status === 'complete'} /> : null}
 
           {activeTab === 'experiments' ? <div className="panel">
             <div className="section-head"><h2 className="section-title" style={{ margin: 0 }}>Experiments</h2><button type="button" className="btn btn-secondary" disabled title="Run experiments from the Faultline CLI.">Run from CLI</button></div>
@@ -153,7 +249,8 @@ export function InvestigationPage() {
           {activeTab === 'coverage' ? <div className="panel"><h2 className="section-title">Coverage assessments</h2>{coverage.length === 0 ? <p className="muted">No coverage assessment recorded.</p> : <div className="card-grid">{coverage.map((item, index) => <article className="nested-card" key={String(item.assessment_id ?? index)}><div className="section-head"><strong>{String(item.condition ?? 'condition')}</strong><StatusBadge label={String(item.grader_observed ?? 'unknown')} tone={tone(String(item.grader_observed ?? 'unknown'))} /></div><p className="muted">Original suite: {String(item.original_suite ?? 'unknown')}</p><p>{String(item.notes ?? 'No notes recorded.')}</p><p className="mono">Detected {String(item.detected_count ?? 0)} · Missed {String(item.missed_count ?? 0)}</p></article>)}</div>}</div> : null}
 
           {activeTab === 'regression' ? <div className="panel"><h2 className="section-title">Regression proposal</h2>{proposal ? <><StatusBadge label={proposalReviewed ? 'Reviewed' : 'Pending human review'} tone={proposalReviewed ? 'success' : 'warning'} /><p>{String(proposal.rationale ?? 'No rationale recorded.')}</p><pre className="raw-json">{displayValue(proposal.tests)}</pre><p className="muted">Digest: {String(proposal.digest ?? 'not recorded')}</p><button type="button" className="btn btn-secondary" disabled title="Proposal approval is handled outside the read-only UI.">Approval via CLI / review workflow</button></> : <p className="muted">No regression proposal recorded for this case.</p>}</div> : null}
-        </div>
+          </div>
+        </details>
       </> : null}
     </div>
   )

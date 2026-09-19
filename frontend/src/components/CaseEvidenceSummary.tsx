@@ -13,7 +13,7 @@ function moneyValue(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? `$${value.toFixed(6)}` : '—'
 }
 
-/** Read-only persisted evidence summary; it deliberately omits legacy paid_calls. */
+/** Collapsed persisted evidence details; it deliberately omits legacy paid_calls. */
 export function CaseEvidenceSummary({ caseFile }: CaseEvidenceSummaryProps) {
   const budget = caseFile.budget ?? {}
   const heldOut = Array.isArray(caseFile.held_out_validation) ? caseFile.held_out_validation : []
@@ -23,13 +23,10 @@ export function CaseEvidenceSummary({ caseFile }: CaseEvidenceSummaryProps) {
   const terminal = caseFile.status === 'complete' || caseFile.status === 'inconclusive'
   const live = caseFile.evidence_origin === 'live'
   return (
-    <section className="panel" aria-label="Persisted evidence summary" style={{ marginBottom: 16 }}>
-      <div className="section-head">
-        <div>
-          <h2 className="section-title" style={{ margin: 0 }}>Persisted evidence</h2>
-          <p className="muted" style={{ margin: '4px 0 0' }}>Counts and limits are read from this case file; no progress is inferred.</p>
-        </div>
-      </div>
+    <details className="panel technical-details" style={{ marginBottom: 16 }}>
+      <summary><strong>Technical details</strong> <span className="muted">Recorded counts, limits, held-out checks, and optional Jev evidence</span></summary>
+      <div style={{ marginTop: 16 }}>
+        <p className="muted">Everything here is read from the saved case file. No progress or diagnosis is inferred.</p>
       <div className="metrics-grid metrics-grid-3">
         <div className="metric-card accent-blue"><div className="metric-label">Target trials</div><div className="metric-value">{numberValue(budget.target_trials)}</div></div>
         <div className="metric-card accent-purple"><div className="metric-label">Investigator calls</div><div className="metric-value">{numberValue(budget.investigator_calls)}</div></div>
@@ -47,6 +44,7 @@ export function CaseEvidenceSummary({ caseFile }: CaseEvidenceSummaryProps) {
         <summary>Optional Jev triage payload (inspectable record, not proof)</summary>
         {triage ? <pre className="raw-json">{displayValue(triage)}</pre> : <p className="muted">No Jev triage payload was persisted.</p>}
       </details>
-    </section>
+      </div>
+    </details>
   )
 }

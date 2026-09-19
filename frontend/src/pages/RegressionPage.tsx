@@ -3,7 +3,7 @@ import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
 import { CaseEvidenceSummary } from '../components/CaseEvidenceSummary'
 import { CaseSelector, useCaseSelection } from '../components/CaseSelector'
-import { displayValue, shortCaseId, useCase, useCases } from '../context/CaseContext'
+import { displayValue, useCase, useCases } from '../context/CaseContext'
 
 export function RegressionPage() {
   const { cases, loading: listLoading, error: listError } = useCases()
@@ -18,37 +18,33 @@ export function RegressionPage() {
   )
   return (
     <div className="page-shell">
-      <PageHeader title="Regression" subtitle="Proposals are displayed for review; approval and export remain CLI operations." />
+      <PageHeader title="Suggested tests" subtitle="Review the saved test suggestion for this investigation. Approval and export stay in the review workflow." actions={selectedId ? <Link className="btn btn-secondary" to={`/investigations/${selectedId}`}>Back to results</Link> : null} />
       {!listLoading && listError ? <div className="panel empty-state"><strong>Unable to load cases.</strong><br />{listError}</div> : null}
       {!listLoading && !listError ? <CaseSelector cases={cases} selectedId={selectedId} unknownId={unknownId} onChange={selectCase} /> : null}
       {listLoading || loading ? <div className="panel empty-state">Loading proposal evidence…</div> : null}
       {!listLoading && !loading && error ? <div className="panel empty-state">{error}</div> : null}
-      {!listLoading && !listError && !loading && !error && !selectedId ? <div className="panel empty-state">No cases are available. Start one from Home or Cases.</div> : null}
+      {!listLoading && !listError && !loading && !error && !selectedId && !unknownId && cases.length === 0 ? <div className="panel empty-state">No investigations yet. Use Start an investigation from Investigations.</div> : null}
       {!listLoading && !listError && !loading && !error && selectedId && caseFile ? (
         <>
           <CaseEvidenceSummary caseFile={caseFile} />
           <div className="panel">
             <div className="section-head">
-              <h2 className="section-title" style={{ margin: 0 }}>
-                Case <span className="mono" title={selectedId}>{shortCaseId(selectedId)}</span>
-              </h2>
-              <Link className="btn btn-secondary" to={`/investigations/${selectedId}?tab=regression`}>Open case</Link>
+              <h2 className="section-title" style={{ margin: 0 }}>Suggested regression test</h2>
             </div>
             {proposal ? (
               <>
                 <StatusBadge label={proposalReviewed ? 'Reviewed' : 'Pending human review'} tone={proposalReviewed ? 'success' : 'warning'} />
                 <p className="muted">
-                  Proposal ID: <span className="mono" title={String(proposal.proposal_id ?? '')}>{shortCaseId(String(proposal.proposal_id ?? ''), 10)}</span>
-                </p>
-                <p className="muted">
-                  Digest: <span className="mono cell-id" title={String(proposal.digest ?? '')}>{shortCaseId(String(proposal.digest ?? ''), 12)}</span>
-                </p>
-                <p className="muted">
                   Review: {proposalReviewed ? `Approved by ${String(proposal.approved_by ?? 'recorded reviewer')} with a matching digest.` : 'Human approval is pending or the approval digest does not match.'}
                 </p>
                 <h3>{String(proposal.title ?? 'Regression proposal')}</h3>
                 <p>{String(proposal.rationale ?? 'No rationale recorded.')}</p>
-                <pre className="raw-json">{displayValue(proposal.tests)}</pre>
+                <details>
+                  <summary>Technical details</summary>
+                  <p className="muted">Proposal ID: <span className="mono" title={String(proposal.proposal_id ?? '')}>{String(proposal.proposal_id ?? '—')}</span></p>
+                  <p className="muted">Digest: <span className="mono" title={String(proposal.digest ?? '')}>{String(proposal.digest ?? '—')}</span></p>
+                  <pre className="raw-json">{displayValue(proposal.tests)}</pre>
+                </details>
               </>
             ) : (
               <p className="muted">No regression proposal has been persisted for this case.</p>

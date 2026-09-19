@@ -11,6 +11,13 @@ function requestId() {
   return crypto.randomUUID()
 }
 
+function scenarioCopy(value: string, fallback: string) {
+  if (value === 'amount-unit') return { label: 'Refund amount mismatch', description: 'Check whether a refund amount is sent in the wrong unit.' }
+  if (value === 'duplicate-refund') return { label: 'Repeated refund request', description: 'Check whether retrying the same refund changes the outcome.' }
+  if (value === 'memory-conflict') return { label: 'Conflicting policy information', description: 'Check whether an old customer note overrides the current policy.' }
+  return { label: fallback, description: 'Run the registered Faultline test situation.' }
+}
+
 export function NewInvestigationDialog({ open, onClose }: NewInvestigationDialogProps) {
   const navigate = useNavigate()
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
@@ -32,6 +39,7 @@ export function NewInvestigationDialog({ open, onClose }: NewInvestigationDialog
   const modeOptions = advertisedModes.map(capabilityOption).filter((item): item is { value: string; label: string } => item !== null)
   const liveMode = mode === 'live'
   const liveAvailable = capabilities?.live_available !== false
+  const selectedScenario = scenarioCopy(profile, profileOptions.find((item) => item.value === profile)?.label ?? profile)
 
   useEffect(() => {
     if (!open) return
@@ -122,18 +130,19 @@ export function NewInvestigationDialog({ open, onClose }: NewInvestigationDialog
 
   return <div className="dialog-backdrop" role="presentation">
     <div ref={dialogRef} className="dialog investigation-dialog" role="dialog" aria-modal="true" aria-labelledby="new-investigation-title">
-      <div className="section-head"><div><h3 id="new-investigation-title">New investigation</h3><p className="muted">Choose a registered Faultline profile and execution mode.</p></div><button type="button" className="icon-btn" onClick={onClose} disabled={pending} aria-label="Close">×</button></div>
-      {loadingCapabilities ? <div className="dialog-loading">Loading registered capabilities…</div> : null}
-      {capabilityError ? <div className="dialog-error">{capabilityError}</div> : null}
+      <div className="section-head"><div><h3 id="new-investigation-title">Start an investigation</h3><p className="muted">Choose a test situation, then decide whether to practice locally or use real AI.</p></div><button type="button" className="icon-btn" onClick={onClose} disabled={pending} aria-label="Close setup" title="Closes setup; it does not cancel a started run.">×</button></div>
+      {loadingCapabilities ? <div className="dialog-loading">Loading available situations…</div> : null}
+      {capabilityError ? <div className="dialog-error"><strong>Cannot reach Faultline. Check Connections and try again.</strong><details><summary>Technical detail</summary><p>{capabilityError}</p></details></div> : null}
       {!loadingCapabilities && !capabilityError && capabilities ? <>
-        <label className="dialog-field" htmlFor="new-profile">Profile<select id="new-profile" aria-label="Profile" value={profile} onChange={(event) => setProfile(event.target.value)} disabled={pending || retrying || profileOptions.length === 0}>{profileOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-        <fieldset className="dialog-fieldset"><legend>Execution mode</legend>{modeOptions.map((item) => <label className="dialog-choice" key={item.value}><input type="radio" name="investigation-mode" value={item.value} checked={mode === item.value} onChange={() => setMode(item.value)} disabled={pending || retrying || (item.value === 'live' && !liveAvailable)} /><span><strong>{item.value === 'live' ? `Live · ${capabilities.target_model ?? 'registered target'}` : item.label}</strong><small>{item.value === 'live' ? (liveAvailable ? 'Paid Groq target; bounded by the approved aggregate cap.' : (capabilities.live_unavailable_reason ?? 'Live credentials are unavailable.')) : 'Deterministic local run; no provider charge.'}</small></span></label>)}</fieldset>
-        {liveMode ? <label className="dialog-checkbox"><input type="checkbox" checked={jev} onChange={(event) => setJev(event.target.checked)} disabled={pending || retrying || capabilities.jev_available === false} /> Optional Jev triage call{capabilities.jev_available === false ? ' (unavailable)' : ''}</label> : null}
-        <div className="capability-note">{liveMode ? `Live guardrails: $0.10 aggregate target cap, $2 automatic pause, $10 hard ceiling, and $1 per-case ceiling. Runs continue in the background for up to 10 minutes; these limits cannot be changed here.${profile === 'memory-conflict' ? ' Memory-conflict is an experimental profile and may be inconclusive.' : ''}` : 'Simulated mode uses the local fixed worker and does not spend provider budget.'}</div>
+        <label className="dialog-field" htmlFor="new-profile">Test situation<select id="new-profile" aria-label="Test situation" value={profile} onChange={(event) => setProfile(event.target.value)} disabled={pending || retrying || profileOptions.length === 0}>{profileOptions.map((item) => <option key={item.value} value={item.value}>{scenarioCopy(item.value, item.label).label}</option>)}</select></label>
+        <p className="dialog-help">{selectedScenario.description}</p>
+        <fieldset className="dialog-fieldset"><legend>How should it run?</legend>{modeOptions.map((item) => { const free = item.value === 'simulated'; const live = item.value === 'live'; return <label className="dialog-choice" key={item.value}><input type="radio" name="investigation-mode" value={item.value} checked={mode === item.value} onChange={() => setMode(item.value)} disabled={pending || retrying || (live && !liveAvailable)} /><span><strong>{free ? 'Free practice run' : live ? 'Real AI run (uses API budget)' : item.label}</strong><small>{free ? 'This practice run is free. It uses simulated responses, not a real AI model.' : live ? (liveAvailable ? 'Makes real model calls. Spending limits stay on.' : (capabilities.live_unavailable_reason ?? 'Real AI is unavailable right now.')) : 'Uses the registered execution mode.'}</small></span></label> })}</fieldset>
+        <details className="dialog-advanced"><summary>Advanced options</summary><div className="dialog-advanced-body"><p><strong>Model:</strong> {liveMode ? (capabilities.target_model ?? 'registered live target') : 'No model call in free practice mode'}</p><p><strong>Provider:</strong> {liveMode ? 'Groq via the local backend' : 'Fixed local worker'}</p>{liveMode ? <label className="dialog-checkbox"><input type="checkbox" checked={jev} onChange={(event) => setJev(event.target.checked)} disabled={pending || retrying || capabilities.jev_available === false} /> Optional Jev triage call{capabilities.jev_available === false ? ' (unavailable)' : ''}</label> : null}<p className="muted">API keys stay in the backend. Daytona execution is currently CLI-only.</p></div></details>
+        <div className="capability-note">{liveMode ? `Real AI guardrails: $0.10 aggregate target cap, $2 automatic pause, $10 hard ceiling, and $1 per-case ceiling. Runs continue in the background for up to 10 minutes; these limits cannot be changed here.${profile === 'memory-conflict' ? ' This situation is experimental and may be inconclusive.' : ''}` : 'Free practice is local, deterministic, and does not spend provider budget.'}</div>
       </> : null}
       {error ? <div className="dialog-error">{error}</div> : null}
       {activeCaseId ? <button type="button" className="btn btn-secondary" onClick={() => { navigate(`/investigations/${encodeURIComponent(activeCaseId)}`); onClose() }}>Open existing investigation</button> : null}
-      <div className="dialog-actions"><button type="button" className="btn btn-secondary" onClick={onClose} disabled={pending}>Cancel</button><button type="button" className="btn btn-primary" onClick={() => void submit()} disabled={pending || loadingCapabilities || Boolean(capabilityError) || Boolean(activeCaseId) || !capabilities?.csrf_token || !profile || !mode}>{pending ? 'Starting…' : retrying ? 'Retry start' : 'Start investigation'}</button></div>
+      <div className="dialog-actions"><button type="button" className="btn btn-secondary" onClick={onClose} disabled={pending} title="Closes setup; it does not cancel a started run.">Close setup</button><button type="button" className="btn btn-primary" onClick={() => void submit()} disabled={pending || loadingCapabilities || Boolean(capabilityError) || Boolean(activeCaseId) || !capabilities?.csrf_token || !profile || !mode}>{pending ? 'Starting…' : retrying ? 'Retry safely' : liveMode ? 'Run with real AI' : 'Run free demo'}</button></div>
     </div>
   </div>
 }

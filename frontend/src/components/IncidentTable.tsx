@@ -1,7 +1,28 @@
-import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import type { CaseSummary } from '../context/CaseContext'
 import { formatCaseLabel, formatDate, shortCaseId } from '../context/CaseContext'
 import { StatusBadge } from './StatusBadge'
+
+function friendlyProfileLabel(value: string | null | undefined) {
+  if (value === 'memory-conflict') return 'Conflicting policy information'
+  if (value === 'amount-unit') return 'Refund amount mismatch'
+  if (value === 'duplicate-refund') return 'Repeated refund request'
+  return formatCaseLabel(value, null)
+}
+
+function friendlyStatusLabel(value: string | null | undefined) {
+  if (value === 'complete') return 'Finished'
+  if (value === 'investigating') return 'Running'
+  if (value === 'queued') return 'Waiting'
+  if (value === 'inconclusive') return 'Needs attention'
+  return value ? formatCaseLabel(value, null) : 'Unknown'
+}
+
+function friendlyOriginLabel(value: string | null | undefined) {
+  if (value === 'live') return 'Real AI'
+  if (value === 'simulated') return 'Practice'
+  return 'Unknown'
+}
 
 interface IncidentTableProps {
   incidents: CaseSummary[]
@@ -9,8 +30,13 @@ interface IncidentTableProps {
 }
 
 export function IncidentTable({ incidents, limit }: IncidentTableProps) {
-  const navigate = useNavigate()
-  const rows = limit ? incidents.slice(0, limit) : incidents
+  const rows = [...incidents].sort((left, right) => {
+    const rightTime = Date.parse(right.createdtime ?? '')
+    const leftTime = Date.parse(left.createdtime ?? '')
+    if (Number.isNaN(rightTime) || Number.isNaN(leftTime)) return 0
+    return rightTime - leftTime
+  })
+  const visibleRows = limit ? rows.slice(0, limit) : rows
 
   return (
     <div className="panel table-panel">
@@ -18,32 +44,31 @@ export function IncidentTable({ incidents, limit }: IncidentTableProps) {
         <table className="table">
           <thead>
             <tr>
-              <th>Case</th>
-              <th>Profile</th>
-              <th>Origin</th>
+              <th>Investigation</th>
+              <th>Evidence</th>
               <th>Status</th>
               <th>Last updated</th>
+              <th>Results</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((incident) => (
-              <tr key={incident.caseid} onClick={() => navigate(`/investigations/${incident.caseid}`)}>
+            {visibleRows.map((incident) => (
+              <tr key={incident.caseid}>
                 <td>
-                  <span className="mono cell-id" title={incident.caseid}>
-                    #{shortCaseId(incident.caseid)}
-                  </span>
+                  <strong>{friendlyProfileLabel(incident.profile)}</strong>
+                  <div className="muted">Investigation {shortCaseId(incident.caseid)}</div>
                 </td>
-                <td>{formatCaseLabel(incident.profile, incident.caseid)}</td>
                 <td>
-                  <StatusBadge label={incident.evidence_origin ?? 'unknown'} tone="info" />
+                  <StatusBadge label={friendlyOriginLabel(incident.evidence_origin)} tone={incident.evidence_origin === 'live' ? 'purple' : 'info'} />
                 </td>
                 <td>
                   <StatusBadge
-                    label={incident.status ?? 'unknown'}
+                    label={friendlyStatusLabel(incident.status)}
                     tone={incident.status === 'complete' ? 'success' : incident.status === 'inconclusive' ? 'failure' : 'investigating'}
                   />
                 </td>
                 <td className="muted cell-date">{formatDate(incident.createdtime)}</td>
+                <td><Link className="link-btn" to={`/investigations/${incident.caseid}`}>View results</Link></td>
               </tr>
             ))}
           </tbody>
