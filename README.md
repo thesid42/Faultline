@@ -36,6 +36,19 @@ faultline run --target-model nvidia/nemotron-3-nano-30b-a3b:free
 
 ## UI
 
+### React prototype (mock data)
+
+A production-style frontend lives in `frontend/` on the `ui/frontend-prototype` branch.
+It uses static mock data only — no backend calls.
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+### Streamlit case-file view (legacy)
+
 ```powershell
 streamlit run faultline/ui.py
 ```
