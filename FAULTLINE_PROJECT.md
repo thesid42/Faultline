@@ -2,7 +2,7 @@
 
 **An agent that investigates failed workflows, discovers the conditions behind them, and turns uncovered failure cases into reviewed regression tests.**
 
-Draft v0.5 · Project plan · Implementation has not started.
+Draft v0.5 · Project plan · Implementation in progress.
 
 ## 1. Product
 

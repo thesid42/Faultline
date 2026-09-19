@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "faultline"
+version = "0.1.0"
+description = "Auditable adaptive investigator for agent workflow failures"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.6,<3", "httpx>=0.27,<1"]
+
+[project.optional-dependencies]
+ui = ["streamlit>=1.35,<2"]
+test = ["pytest>=8,<10"]
+all = ["streamlit>=1.35,<2", "pytest>=8,<10"]
+
+[project.scripts]
+faultline = "faultline.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 160
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["E501"]
+
+[tool.setuptools.packages.find]
+include = ["faultline*"]
