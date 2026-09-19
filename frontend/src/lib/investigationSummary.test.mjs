@@ -43,6 +43,86 @@ test('inconclusive case cannot claim a stale supported hypothesis or proposal as
   assert.ok(summary.nextSteps.some((step) => step.includes('changed after approval')))
 })
 
+test('shows an invalid experiment plan and its correction without claiming a cause', () => {
+  const summary = summarizeInvestigation(baseCase({
+    status: 'investigating',
+    observations: [{
+      kind: 'invalid_experiment_plan',
+      reason: 'the control arm was not paired with the incident fixture',
+      message: 'The requested comparison cannot be interpreted.',
+      correction_contract: { operator: 'policy_notes', value_type: 'non-empty string', accepted_aliases: ['reviewed_policy'], description: 'replace the selected policy result with a reviewed policy string' },
+    }],
+  }))
+  assert.match(summary.progress, /correcting the test plan/)
+  assert.ok(summary.findings.some((finding) => finding.includes('could not use its test plan')))
+  assert.ok(summary.findings.some((finding) => finding.includes('replace the selected policy result')))
+  assert.ok(summary.nextSteps.some((step) => step.includes('correcting its test plan; wait')))
+  assert.doesNotMatch(summary.findings.join(' '), /dollars-versus-cents|duplicate refunds/)
+})
+
+test('controller no progress is an explicit inconclusive stop', () => {
+  const summary = summarizeInvestigation(baseCase({
+    status: 'inconclusive',
+    stop_reason: 'inconclusive:controller_no_progress',
+    observations: [{ kind: 'controller_recovery', status: 'warning', reason: 'repeated_no_progress' }],
+  }))
+  assert.match(summary.happenedDetail, /could not correct its test plan/)
+  assert.ok(summary.findings.some((finding) => finding.includes('No cause is proven')))
+  assert.ok(summary.nextSteps.some((step) => step.includes('Correct the investigator test plan')))
+})
+
+test('step, money, and provider stops remain distinguishable', () => {
+  const step = summarizeInvestigation(baseCase({ status: 'inconclusive', stop_reason: 'inconclusive:max_investigator_steps_exhausted' }))
+  assert.match(step.happenedDetail, /step limit/)
+  assert.ok(step.nextSteps.some((next) => next.includes('step limit')))
+
+  const money = summarizeInvestigation(baseCase({ status: 'inconclusive', stop_reason: 'inconclusive:target_trial_budget_exhausted' }))
+  assert.match(money.happenedDetail, /budget or trial limit/)
+  assert.ok(money.nextSteps.some((next) => next.includes('budget or trial limit')))
+
+  const provider = summarizeInvestigation(baseCase({ status: 'inconclusive', stop_reason: 'inconclusive:provider_error' }))
+  assert.match(provider.happenedDetail, /provider or infrastructure failure/)
+  assert.ok(provider.nextSteps.some((next) => next.includes('provider or infrastructure failure')))
+})
+
+test('reviewed-good held-out failure is not presented as a confirmed fix', () => {
+  const summary = summarizeInvestigation(baseCase({
+    status: 'inconclusive',
+    stop_reason: 'inconclusive:held_out_reviewed_good_failed',
+  }))
+  assert.match(summary.happenedDetail, /comparison version also failed its checks/)
+  assert.match(summary.happenedDetail, /not confirmed as a fix/)
+  assert.ok(summary.nextSteps.some((step) => step.includes('compare the suspect and reviewed configurations')))
+  assert.doesNotMatch(summary.happenedDetail, /provider|budget|infrastructure/)
+})
+
+test('derives the reviewed-good failure from the historical generic stop only with a failed held-out cell', () => {
+  const summary = summarizeInvestigation(baseCase({
+    status: 'inconclusive',
+    stop_reason: 'inconclusive:evidence_phase:RuntimeError',
+    held_out_validation: [{
+      configuration_id: 'reviewed_good',
+      status: 'completed',
+      checker_passed: false,
+      run: { status: 'completed', checker_status: 'completed', checker_passed: false },
+    }],
+  }))
+  assert.match(summary.happenedDetail, /comparison version also failed its checks/)
+  assert.ok(summary.nextSteps.some((step) => step.includes('compare the suspect and reviewed configurations')))
+})
+
+test('completed cases describe recovered plan warnings without downgrading the result', () => {
+  const summary = summarizeInvestigation(baseCase({
+    observations: [
+      { kind: 'invalid_experiment_plan', message: 'an early plan was incomplete' },
+      { kind: 'controller_recovery', status: 'warning', reason: 'repeated_no_progress' },
+    ],
+  }))
+  assert.ok(summary.findings.some((finding) => finding.includes('recovered from an earlier test-plan warning')))
+  assert.ok(summary.findings.some((finding) => finding.includes('investigation continued')))
+  assert.doesNotMatch(summary.findings.join(' '), /No cause is proven/)
+})
+
 test('infrastructure checker failure is unknown even when checker_passed is false', () => {
   const summary = summarizeInvestigation(baseCase({
     runs: [{ run_id: 'source-1', status: 'infrastructure_error', checker_status: 'infrastructure_error', checker_passed: false }],

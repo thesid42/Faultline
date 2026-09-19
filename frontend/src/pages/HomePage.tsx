@@ -20,7 +20,6 @@ export function HomePage() {
     <div className="page-shell beginner-home">
       <section className="hero-card beginner-hero">
         <FaultlineHeroVisual />
-        <div className="hero-avatar" aria-hidden>FL</div>
         <div className="hero-content">
           <div className="hero-copy">
             <p className="eyebrow">Start here</p>

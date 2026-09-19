@@ -33,6 +33,30 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+function recoveryMessage(observation: RecordValue): string {
+  return text(observation.message) || text(observation.reason) || 'The investigator recorded a test-plan problem.'
+}
+
+function recoveryContract(observation: RecordValue): string {
+  const value = observation.correction_contract
+  if (typeof value === 'string') return value.trim()
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string').join('; ')
+  if (value && typeof value === 'object') {
+    const contract = value as Record<string, unknown>
+    const detail = (item: unknown): string => text(item) || (Array.isArray(item)
+      ? item.filter((entry): entry is string | number | boolean => typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean').map(String).join(', ')
+      : typeof item === 'number' || typeof item === 'boolean' ? String(item) : '')
+    const parts: string[] = []
+    if (detail(contract.description)) parts.push(detail(contract.description))
+    if (detail(contract.value_type)) parts.push(`value must be ${detail(contract.value_type)}`)
+    if (detail(contract.allowed_values)) parts.push(`allowed values: ${detail(contract.allowed_values)}`)
+    if (detail(contract.range)) parts.push(`range: ${detail(contract.range)}`)
+    if (detail(contract.accepted_aliases)) parts.push(`accepted aliases: ${detail(contract.accepted_aliases)}`)
+    return parts.join('; ')
+  }
+  return ''
+}
+
 function sourceRun(caseFile: CaseFile): RecordValue | null {
   const runs = records(caseFile.runs)
   const incidentRunId = text(record(caseFile.incident).run_id)
@@ -94,6 +118,17 @@ function sourceFailureText(run: RecordValue): string | null {
   return null
 }
 
+function hasFailedReviewedGoodHeldout(caseFile: CaseFile): boolean {
+  return records(caseFile.held_out_validation).some((row) => {
+    if (text(row.configuration_id).toLowerCase() !== 'reviewed_good' || text(row.status).toLowerCase() !== 'completed') return false
+    const nestedRun = record(row.run)
+    const checkerPassed = typeof row.checker_passed === 'boolean' ? row.checker_passed : nestedRun.checker_passed
+    return text(nestedRun.status).toLowerCase() === 'completed'
+      && text(nestedRun.checker_status).toLowerCase() === 'completed'
+      && checkerPassed === false
+  })
+}
+
 function friendlyFinding(hypothesis: RecordValue): string {
   const predicates = record(hypothesis.predicates)
   const family = text(predicates.family).toLowerCase()
@@ -123,15 +158,39 @@ export function summarizeInvestigation(caseFile: CaseFile): InvestigationSummary
   const executionStatus = text(run?.execution_status).toLowerCase()
   const checkerPassed = run?.checker_passed
   const runIsUsable = Boolean(run) && runStatus === 'completed' && text(run?.checker_status).toLowerCase() === 'completed' && executionStatus !== 'infrastructure_error'
-  const failureStoppedCase = status === 'inconclusive' && /(provider|infrastructure|timeout|error|failure|unavailable)/.test(stopReason)
+  const observations = records(caseFile.observations)
+  const invalidPlanEvents = observations.filter((item) => text(item.kind).toLowerCase() === 'invalid_experiment_plan')
+  const noProgressEvents = observations.filter((item) => {
+    const kind = text(item.kind).toLowerCase()
+    return kind === 'no_progress' || (kind === 'controller_recovery' && text(item.reason).toLowerCase() === 'repeated_no_progress')
+  })
+  const controllerNoProgress = stopReason === 'inconclusive:controller_no_progress'
+  const heldoutFailureStop = stopReason === 'inconclusive:held_out_reviewed_good_failed'
+  const historicalHeldoutFailure = stopReason === 'inconclusive:evidence_phase:runtimeerror' && hasFailedReviewedGoodHeldout(caseFile)
+  const reviewedGoodHeldoutFailed = heldoutFailureStop || historicalHeldoutFailure
+  const stepLimitStopped = stopReason.includes('max_investigator_steps_exhausted')
+  const callLimitStopped = stopReason.includes('investigator_call_budget_exhausted')
+  const moneyLimitStopped = /(budget|ceiling|target_trial_budget_exhausted|automation_cap)/.test(stopReason)
+  const providerStopped = /(provider|infrastructure|timeout|unavailable|error|failure)/.test(stopReason)
+  const failureStoppedCase = status === 'inconclusive' && (providerStopped || moneyLimitStopped)
 
   let happened = 'What happened is unknown from the persisted evidence.'
   let happenedDetail = 'A source run and an independent checker result are needed before drawing a conclusion.'
   if (status === 'inconclusive') {
     happened = 'Unable to confirm this investigation.'
-    happenedDetail = failureStoppedCase
-      ? 'A provider or infrastructure failure stopped the run. The saved evidence is incomplete, so no cause or fix is claimed.'
-      : 'The investigation ended inconclusively. Any earlier evidence is provisional, so no final cause or fix is claimed.'
+    happenedDetail = controllerNoProgress
+      ? 'The investigator could not correct its test plan. The saved evidence is incomplete, so no cause or fix is claimed.'
+      : reviewedGoodHeldoutFailed
+        ? 'The comparison version also failed its checks, so this change is not confirmed as a fix.'
+      : stepLimitStopped
+        ? 'The investigator reached its step limit before finishing. No cause or fix is claimed.'
+        : callLimitStopped
+          ? 'The investigator reached its call limit before finishing. No cause or fix is claimed.'
+          : failureStoppedCase
+            ? moneyLimitStopped && !providerStopped
+              ? 'A budget or trial limit stopped the run. The saved evidence is incomplete, so no cause or fix is claimed.'
+              : 'A provider or infrastructure failure stopped the run. The saved evidence is incomplete, so no cause or fix is claimed.'
+            : 'The investigation ended inconclusively. Any earlier evidence is provisional, so no final cause or fix is claimed.'
   } else if (run && runIsUsable && typeof checkerPassed === 'boolean') {
     happened = checkerPassed ? 'The independent check passed this run.' : sourceFailureText(run) ?? 'The independent check found a failure in this run.'
     happenedDetail = checkerPassed
@@ -164,14 +223,42 @@ export function summarizeInvestigation(caseFile: CaseFile): InvestigationSummary
     const countText = Object.entries(counts).map(([name, count]) => `${count} ${name.replaceAll('_', ' ')}`).join(', ')
     findings.push(`Recorded experiment outcomes: ${countText}.`)
   }
+  if (invalidPlanEvents.length > 0) {
+    const latest = invalidPlanEvents[invalidPlanEvents.length - 1]
+    const correction = recoveryContract(latest)
+    if (status === 'complete') {
+      findings.push('The investigator recovered from an earlier test-plan warning before finishing.')
+    } else {
+      findings.push(`The investigator could not use its test plan: ${recoveryMessage(latest)}${correction ? ` Correction required: ${correction}.` : ' It must correct the plan before drawing conclusions.'}`)
+    }
+  }
+  if (noProgressEvents.length > 0 || controllerNoProgress) {
+    findings.push(status === 'complete'
+      ? 'Recovered from an earlier repeated-step warning; the investigation continued.'
+      : 'The investigator made no progress on a usable test plan. No cause is proven.')
+  }
 
   const coverage = records(caseFile.coverage)
   const missingConditions = [...new Set(coverage.filter((item) => text(item.original_suite).toLowerCase() === 'missing').map((item) => text(item.condition)).filter(Boolean))]
   const proposal = caseFile.proposal ? record(caseFile.proposal) : null
   const proposalStatus = reviewState(proposal)
   const nextSteps: string[] = []
-  if (failureStoppedCase) {
+  if (status === 'investigating' && (noProgressEvents.length > 0 || invalidPlanEvents.length > 0)) {
+    nextSteps.push('The investigator is correcting its test plan; wait for the saved result before rerunning.')
+  } else if (controllerNoProgress) {
+    nextSteps.push('Correct the investigator test plan, then rerun before relying on the evidence.')
+  } else if (reviewedGoodHeldoutFailed) {
+    nextSteps.push('Inspect the target decision and compare the suspect and reviewed configurations; do not treat this change as a confirmed fix.')
+  } else if (stepLimitStopped) {
+    nextSteps.push('The investigator reached its step limit; rerun with a corrected or smaller test plan before relying on the evidence.')
+  } else if (callLimitStopped) {
+    nextSteps.push('The investigator reached its call limit; inspect the saved plan and rerun within the allowed call budget.')
+  } else if (moneyLimitStopped && !providerStopped) {
+    nextSteps.push('A budget or trial limit stopped the run; wait for approval or budget availability before rerunning.')
+  } else if (failureStoppedCase) {
     nextSteps.push('Resolve the provider or infrastructure failure, then rerun the investigation before relying on its findings.')
+  } else if (status !== 'complete' && (noProgressEvents.length > 0 || invalidPlanEvents.length > 0)) {
+    nextSteps.push('Correct the investigator test plan, then rerun before relying on the evidence.')
   }
   if (missingConditions.length > 0) {
     missingConditions.forEach((condition) => nextSteps.push(friendlyMissingCondition(condition)))
@@ -185,11 +272,15 @@ export function summarizeInvestigation(caseFile: CaseFile): InvestigationSummary
   if (nextSteps.length === 0) nextSteps.push('No further action is recorded; inspect Technical details for the evidence supporting this state.')
 
   const runs = records(caseFile.runs)
-  const observations = records(caseFile.observations)
   const progressParts = [`${runs.length} recorded run${runs.length === 1 ? '' : 's'}`, `${results.length} experiment result${results.length === 1 ? '' : 's'}`]
   if (observations.length > 0) {
-    const checkpoint = `${text(observations[observations.length - 1].stage)} ${text(observations[observations.length - 1].kind)}`.toLowerCase()
-    const label = checkpoint.includes('experiment') ? 'testing possible causes' : checkpoint.includes('hypothes') || checkpoint.includes('triage') ? 'checking possible causes' : checkpoint.includes('coverage') || checkpoint.includes('proposal') || checkpoint.includes('propose') || checkpoint.includes('test') ? 'preparing results' : 'collecting evidence'
+    const latest = observations[observations.length - 1]
+    const latestKind = text(latest.kind).toLowerCase()
+    const checkpoint = `${text(latest.stage)} ${latestKind}`.toLowerCase()
+    const latestIsRecovery = latestKind === 'invalid_experiment_plan' || latestKind === 'no_progress' || (latestKind === 'controller_recovery' && text(latest.reason).toLowerCase() === 'repeated_no_progress')
+    const label = status === 'investigating' && latestIsRecovery
+      ? 'correcting the test plan'
+      : checkpoint.includes('experiment') ? 'testing possible causes' : checkpoint.includes('hypothes') || checkpoint.includes('triage') ? 'checking possible causes' : checkpoint.includes('coverage') || checkpoint.includes('proposal') || checkpoint.includes('propose') || checkpoint.includes('test') ? 'preparing results' : 'collecting evidence'
     progressParts.push(label)
   }
   const progress = status === 'queued'

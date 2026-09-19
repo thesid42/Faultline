@@ -31,6 +31,15 @@ from .storage import ArtifactStore
 from .trials import LocalTrialRunner
 
 
+_TRUSTED_EVIDENCE_FAILURES = frozenset(
+    {
+        "required_evidence_inconclusive",
+        "held_out_validation_inconclusive",
+        "held_out_reviewed_good_failed",
+    }
+)
+
+
 @dataclass
 class DemoResult:
     case: CaseFile
@@ -372,6 +381,38 @@ def _run_held_out_matrix(tools: Tools, scenarios: list[Scenario]) -> list[dict[s
     return validation
 
 
+def _evidence_failure_trial_ids(tools: Tools) -> list[str]:
+    """Return only audit IDs for rows that cannot support evidence.
+
+    A failed suspect checker is expected incident evidence, so it is not
+    included unless the row is otherwise unusable. Held-out reviewed-good
+    failures are included because they invalidate the reference arm.
+    """
+    failed: list[str] = []
+    for result in tools.results:
+        unusable = (
+            result.status != "completed"
+            or not result.activation.activated
+            or result.run is None
+            or result.run.checker_status != "completed"
+            or (
+                result.fixture_partition == "held_out"
+                and result.configuration_id == "reviewed_good"
+                and result.run.checker_passed is not True
+            )
+        )
+        if unusable:
+            failed.append(result.trial_id)
+    for row in tools.held_out_validation:
+        if row.get("status") != "completed" or (
+            row.get("configuration_id") == "reviewed_good" and row.get("checker_passed") is not True
+        ):
+            trial_id = row.get("trial_id")
+            if isinstance(trial_id, str):
+                failed.append(trial_id)
+    return list(dict.fromkeys(failed))
+
+
 def _held_out_conflict_fixtures(profile: _DemoProfile) -> list[Scenario]:
     """Return two fresh held-out IDs, including a withheld memory conflict."""
     fixtures = list(profile.held_out)
@@ -516,7 +557,17 @@ def run_demo(*, live: bool = False, backend: str = "local", jev: bool = False, a
                 _run_regression_matrix(tools, incident_run.scenario, control)
                 _run_held_out_matrix(tools, _held_out_conflict_fixtures(selected_profile))
             except Exception as exc:
-                tools.stop_reason = f"inconclusive:evidence_phase:{type(exc).__name__}"
+                candidate_reason = exc.args[0] if isinstance(exc, RuntimeError) and len(exc.args) == 1 and isinstance(exc.args[0], str) else None
+                trusted_reason = candidate_reason if candidate_reason in _TRUSTED_EVIDENCE_FAILURES else None
+                tools.stop_reason = f"inconclusive:{trusted_reason}" if trusted_reason is not None else "inconclusive:evidence_phase"
+                tools.observations.append(
+                    {
+                        "kind": "validation_failure",
+                        "status": "inconclusive",
+                        "reason": trusted_reason or "evidence_phase_failed",
+                        "failed_trial_ids": _evidence_failure_trial_ids(tools),
+                    }
+                )
         else:
             tools.observations.append({"kind": "stop", "status": "inconclusive", "reason": controller_stop})
         _persist_case(session, tools, incident=incident_record, scenarios=scenarios)
@@ -544,6 +595,10 @@ def run_demo(*, live: bool = False, backend: str = "local", jev: bool = False, a
             tools.stop_reason = "validation_completed" if tools.stop_reason == "validation_handoff" else ""
         if not tools.stop_reason:
             tools.stop_reason = "controller_finished"
+        if tools.stop_reason.startswith("inconclusive:"):
+            # A proposal is evidence-bearing output. Never expose one after a
+            # trusted validation failure or any other fail-closed stop.
+            proposal = None
         status = "complete" if proposal is not None and not tools.stop_reason.startswith("inconclusive:") else "inconclusive"
         incident_record.status = status  # type: ignore[assignment]
         _sync_budget_summary(budget, ledger)

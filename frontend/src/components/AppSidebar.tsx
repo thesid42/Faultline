@@ -33,7 +33,6 @@ export function AppSidebar() {
         </details>
       </nav>
 
-      <div className="sidebar-footer"><div className="avatar-btn" title="Faultline workspace" aria-label="Faultline workspace">FL</div></div>
     </aside>
   )
 }

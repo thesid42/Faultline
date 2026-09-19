@@ -18,6 +18,26 @@ SUSPECT_CONFIGURATION_IDS = frozenset({"suspect", "suspect_config", "buggy", "bu
 REVIEWED_GOOD_CONFIGURATION_IDS = frozenset({"reviewed_good", "reviewed-good", "reviewed_good_config", "reviewed-good-config"})
 
 
+def _operator_correction_contract(operator: str) -> dict[str, Any]:
+    """Return the small, typed value contract shown to a recovering controller."""
+    contracts: dict[str, dict[str, Any]] = {
+        "baseline": {"value_type": "null", "description": "leave the selected scenario unchanged"},
+        "policy_notes": {"value_type": "non-empty string", "accepted_aliases": ["reviewed_policy"], "description": "replace the selected policy result with a reviewed policy string"},
+        "remove_note": {"value_type": "non-empty string", "accepted_aliases": ["obsolete"], "description": "exact note text already present in the selected scenario"},
+        "unrelated_note": {"value_type": "non-empty string", "accepted_aliases": ["control"], "description": "new unrelated note text not already present; the selected scenario must have notes"},
+        "order_age": {"value_type": "integer", "range": "0 or greater", "description": "replace only the selected order age"},
+        "refund_api_unit": {"value_type": "string", "allowed_values": ["major", "minor"], "description": "select the gateway unit"},
+        "delivery_attempts": {"value_type": "integer", "allowed_values": [1, 2, 3], "description": "select the delivery attempt count"},
+    }
+    return {"operator": operator, **contracts.get(operator, {"value_type": "unknown"})}
+
+
+def _safe_controller_value(value: Any) -> Any:
+    if isinstance(value, str) and len(value) > 256:
+        return value[:256] + "…"
+    return value
+
+
 class InvestigatorController(Protocol):
     def next_action(self, observations: list[dict[str, Any]]) -> ControllerAction | dict[str, Any] | str: ...
 
@@ -114,8 +134,18 @@ class Tools:
             for hypothesis in hypotheses:
                 hypothesis.predicates.setdefault("source_run_id", focus.run_id)
                 hypothesis.predicates.setdefault("source_scenario_id", focus.scenario.scenario_id)
-        self.hypotheses = hypotheses
-        self.observations.append({"kind": "hypotheses", "count": len(hypotheses), "hypotheses": [{"hypothesis_id": item.hypothesis_id, "statement": item.statement, "predicates": item.predicates, "confidence": item.confidence} for item in hypotheses]})
+        previous = {self._hypothesis_key(item): item for item in self.hypotheses}
+        reused = False
+        stable_hypotheses: list[Hypothesis] = []
+        for item in hypotheses:
+            prior = previous.get(self._hypothesis_key(item))
+            if prior is not None:
+                stable_hypotheses.append(prior)
+                reused = True
+            else:
+                stable_hypotheses.append(item)
+        self.hypotheses = stable_hypotheses
+        self.observations.append({"kind": "hypotheses", "status": "unchanged" if reused else "generated", "count": len(stable_hypotheses), "hypotheses": [{"hypothesis_id": item.hypothesis_id, "statement": item.statement, "predicates": item.predicates, "confidence": item.confidence, "status": item.status, "rationale": item.rationale} for item in stable_hypotheses]})
         if self.jev is not None and self.budget.can_jev():
             self.budget.jev_calls += 1
             selected = focus
@@ -123,7 +153,23 @@ class Tools:
             judgment = self.jev.triage(hypotheses, evidence)
             self.triage = judgment
             self.observations.append({"kind": "jev_triage", "available": judgment is not None, "result": judgment})
-        return hypotheses
+        return self.hypotheses
+
+    @staticmethod
+    def _hypothesis_key(hypothesis: Hypothesis) -> tuple[Any, ...]:
+        predicates = hypothesis.predicates
+        return (
+            predicates.get("source_run_id"),
+            predicates.get("source_scenario_id"),
+            predicates.get("family"),
+            predicates.get("note_text"),
+            predicates.get("policy_version"),
+            predicates.get("max_age_days"),
+            predicates.get("refund_api_unit"),
+            predicates.get("delivery_attempts"),
+            predicates.get("ledger_entries"),
+            hypothesis.statement,
+        )
 
     def run_experiment(self, spec: ExperimentSpec, scenario: Scenario) -> list[ExperimentResult]:
         if spec.source_scenario_id and spec.source_scenario_id != scenario.scenario_id:
@@ -137,7 +183,24 @@ class Tools:
         self.experiments.append(spec)
         output = self.runner.run(spec, scenario)
         self.results.extend(output)
-        self.observations.extend({"kind": "experiment", "trial_id": result.trial_id, "operator": spec.operator, "source": spec.source_role, "configuration_id": spec.configuration_id, "activated": result.activation.activated, "status": result.status, "violation": result.observed_violation} for result in output)
+        self.observations.extend(
+            {
+                "kind": "experiment",
+                "trial_id": result.trial_id,
+                "experiment_id": result.experiment_id,
+                "operator": spec.operator,
+                "value": _safe_controller_value(spec.value),
+                "source": spec.source_role,
+                "configuration_id": spec.configuration_id,
+                "activated": result.activation.activated,
+                "status": result.status,
+                "violation": result.observed_violation,
+                "activation_error": (result.activation.message or result.excluded_reason) if not result.activation.activated else None,
+                "correction_contract": _operator_correction_contract(spec.operator) if not result.activation.activated else None,
+                "excluded_reason": result.excluded_reason,
+            }
+            for result in output
+        )
         self._revise_hypotheses(spec, output)
         return output
 
@@ -624,13 +687,166 @@ class AdaptiveInvestigator:
     # four held-out cells. Adaptive actions must not starve that phase.
     validation_reserve_trials: int = 0
 
+    @staticmethod
+    def _preflight_experiment(action: ControllerAction, target: Scenario) -> dict[str, Any] | None:
+        """Reject malformed or provably non-activating plans before trials.
+
+        This is deliberately only a local contract check.  The trial runner
+        remains authoritative for activation receipts and all execution,
+        checker, budget, and infrastructure gates.
+        """
+        operator = action.operator
+        value = action.value
+        contract = _operator_correction_contract(operator or "unknown")
+
+        def error(code: str, message: str) -> dict[str, Any]:
+            return {
+                "kind": "invalid_experiment_plan",
+                "status": "rejected",
+                "operator": operator,
+                "value": _safe_controller_value(value),
+                "error_code": code,
+                "message": message,
+                "correction_contract": contract,
+                "hypothesis_id": action.hypothesis_id,
+            }
+
+        if operator == "baseline":
+            return error("baseline_value_not_null", "baseline does not accept an intervention value") if value is not None else None
+        if operator in {"policy_notes", "remove_note", "unrelated_note", "refund_api_unit"}:
+            if not isinstance(value, str) or not value.strip():
+                return error("missing_string_value", f"{operator} requires a non-empty string value")
+        if operator == "policy_notes":
+            if value == "reviewed_policy":
+                return None
+            if target.notes == [value]:
+                return error("activation_would_be_noop", "policy_notes would leave the selected notes unchanged")
+        elif operator == "remove_note":
+            if value not in target.notes:
+                return error("note_not_present", "remove_note must name an exact note present in the selected scenario")
+        elif operator == "unrelated_note":
+            if not target.notes:
+                return error("notes_required", "unrelated_note requires existing notes in the selected scenario")
+            if value in target.notes:
+                return error("note_already_present", "unrelated_note must append a note not already present")
+        elif operator == "refund_api_unit":
+            if value not in {"major", "minor"}:
+                return error("invalid_enum_value", "refund_api_unit requires major or minor")
+            if value == target.refund_api_unit:
+                return error("activation_would_be_noop", "refund_api_unit already has that value")
+        elif operator == "delivery_attempts":
+            if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 3:
+                return error("invalid_integer_value", "delivery_attempts requires an integer from 1 through 3")
+            if value == target.delivery_attempts:
+                return error("activation_would_be_noop", "delivery_attempts already has that value")
+        elif operator == "order_age":
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                return error("invalid_integer_value", "order_age requires a non-negative integer")
+            if value == target.order_age_days:
+                return error("activation_would_be_noop", "order_age already has that value")
+        return None
+
+    @staticmethod
+    def _progress_state(tools: Tools) -> tuple[Any, ...]:
+        return (
+            len(tools.runs),
+            len(tools.results),
+            tuple((item.hypothesis_id, item.status, item.rationale) for item in tools.hypotheses),
+            len(tools.experiments),
+        )
+
+    def _record_no_progress(self, counts: dict[str, int], signature: str, *, steps_remaining: int, correction: dict[str, Any] | None = None) -> bool:
+        counts[signature] = counts.get(signature, 0) + 1
+        count = counts[signature]
+        if count == 2:
+            warning: dict[str, Any] = {
+                "kind": "controller_recovery",
+                "status": "warning",
+                "reason": "repeated_no_progress",
+                "signature": signature,
+                "steps_remaining": steps_remaining,
+                "useful_actions": ["inspect_trace selected source", "triage_hypotheses once per source", "run_experiment with a value matching its correction contract", "finish with an explicit inconclusive reason"],
+            }
+            if correction is not None:
+                warning["correction_contract"] = correction
+            self.tools.observations.append(warning)
+        if count >= 3:
+            self.tools.stop_reason = self.tools.stop_reason or "inconclusive:controller_no_progress"
+            self.tools.observations.append({"kind": "stop", "status": "inconclusive", "reason": self.tools.stop_reason, "steps_remaining": steps_remaining, "recovery_for": signature})
+            return True
+        return False
+
+    def _validation_handoff_ready(self, scenario: Scenario) -> bool:
+        """Return whether adaptive work has earned the registered validation phase.
+
+        This gate is intentionally evidence-bound.  A source checker failure,
+        stable hypotheses, and at least one completed activated intervention
+        tied to that exact source run are required.  Invalid/provider-failed
+        trials, baseline-only probes, and a missing validation reserve never
+        trigger the handoff.
+        """
+        reserve = self.validation_reserve_trials
+        budget = self.tools.budget
+        if reserve <= 0 or budget.deadline_expired():
+            return False
+        if budget.target_trials + reserve > budget.max_target_trials:
+            return False
+        source_runs = [
+            run
+            for run in self.tools.runs
+            if run.scenario == scenario
+            and run.configuration_id == "default"
+            and run.fixture_partition == "main"
+            and run.status.value == "completed"
+            and run.checker_status == "completed"
+            and run.checker_passed is False
+        ]
+        if not source_runs or not self.tools.hypotheses:
+            return False
+        source_ids = {run.run_id for run in source_runs}
+        return any(
+            result.source_run_id in source_ids
+            and result.scenario_id == scenario.scenario_id
+            and result.fixture_partition == "main"
+            and result.status == "completed"
+            and result.activation.activated
+            and result.activation.operator != "baseline"
+            and result.run is not None
+            and result.run.status.value == "completed"
+            and result.run.checker_status == "completed"
+            and result.run.checker_passed is not None
+            for result in self.tools.results
+        )
+
     def investigate(self, scenario: Scenario, *, max_steps: int = 8, control_scenario: Scenario | None = None, held_out_scenarios: list[Scenario] | None = None, original_suite_runs: list[RunRecord] | None = None) -> list[ExperimentResult]:
         all_results: list[ExperimentResult] = []
         control = control_scenario or legitimate_control()
-        for _ in range(max_steps):
+        no_progress_counts: dict[str, int] = {}
+        for step_index in range(max_steps):
             if not self.tools.budget.can_investigate():
                 self.tools.stop_reason = self.tools.stop_reason or "inconclusive:investigator_call_budget_exhausted"
                 self.tools.observations.append({"kind": "stop", "status": "inconclusive", "reason": self.tools.stop_reason})
+                break
+            remaining_steps = min(
+                max_steps - step_index,
+                self.tools.budget.max_investigator_calls - self.tools.budget.investigator_calls,
+            )
+            if (
+                remaining_steps > 0
+                and (remaining_steps <= 2 or any(count >= 2 for count in no_progress_counts.values()))
+                and not self.tools.stop_reason
+                and self._validation_handoff_ready(scenario)
+            ):
+                self.tools.observations.append(
+                    {
+                        "kind": "validation_handoff",
+                        "status": "deferred",
+                        "reason": "adaptive_step_budget_reserved_for_validation",
+                        "target_trials": self.tools.budget.target_trials,
+                        "reserved_trials": self.validation_reserve_trials,
+                    }
+                )
+                self.tools.stop_reason = "validation_handoff"
                 break
             self.tools.budget.investigator_calls += 1
             try:
@@ -663,18 +879,62 @@ class AdaptiveInvestigator:
                     self.tools.observations.append({"kind": "stop", "status": "inconclusive", "reason": self.tools.stop_reason})
                     break
                 self.tools.inspect_trace(run)
+                no_progress_counts.clear()
                 continue
             if action.kind == "inspect_trace":
                 selected_run = self._selected_run(scenario)
+                before = self._progress_state(self.tools)
                 if selected_run is not None:
                     self.tools.inspect_trace(selected_run)
                 else:
                     self.tools.observations.append({"kind": "inspect_trace", "status": "no_run"})
+                if self._progress_state(self.tools) == before:
+                    source_key = selected_run.run_id if selected_run is not None else "none"
+                    if self._record_no_progress(no_progress_counts, f"inspect_trace:{source_key}", steps_remaining=max_steps - self.tools.budget.investigator_calls):
+                        break
+                else:
+                    no_progress_counts.clear()
                 continue
             if action.kind == "triage_hypotheses":
-                self.tools.triage_hypotheses(self.tools.runs, selected_run=self._selected_run(scenario))
+                before = self._progress_state(self.tools)
+                selected_run = self._selected_run(scenario)
+                self.tools.triage_hypotheses(self.tools.runs, selected_run=selected_run)
+                if self._progress_state(self.tools) == before:
+                    source_key = selected_run.run_id if selected_run is not None else "none"
+                    if self._record_no_progress(no_progress_counts, f"triage_hypotheses:{source_key}", steps_remaining=max_steps - self.tools.budget.investigator_calls):
+                        break
+                else:
+                    no_progress_counts.clear()
+                continue
+            if action.kind == "run_experiment" and not action.operator:
+                missing_operator = {"kind": "invalid_experiment_plan", "status": "rejected", "operator": None, "value": _safe_controller_value(action.value), "error_code": "missing_operator", "message": "run_experiment requires an operator", "correction_contract": {"operator": "required", "allowed_values": sorted(_operator_correction_contract(name)["operator"] for name in ("baseline", "policy_notes", "remove_note", "unrelated_note", "order_age", "refund_api_unit", "delivery_attempts"))}, "hypothesis_id": action.hypothesis_id}
+                self.tools.observations.append(missing_operator)
+                if self._record_no_progress(no_progress_counts, "invalid:missing_operator", steps_remaining=max_steps - self.tools.budget.investigator_calls, correction=missing_operator["correction_contract"]):
+                    break
                 continue
             if action.kind == "run_experiment" and action.operator:
+                value = action.value
+                if action.source == "held_out":
+                    target = next((item for item in (held_out_scenarios or []) if isinstance(action.value, str) and item.scenario_id == action.value), None)
+                    if target is None:
+                        self.tools.stop_reason = "inconclusive:held_out_source_unresolved"
+                        self.tools.observations.append({"kind": "stop", "status": "inconclusive", "reason": self.tools.stop_reason})
+                        break
+                else:
+                    target = control if action.source == "control" else scenario
+                if action.operator == "policy_notes" and value == "reviewed_policy":
+                    value = "Refunds are allowed up to 14 days."
+                if action.operator == "remove_note" and value == "obsolete":
+                    value = OBSOLETE_NOTE
+                if action.operator == "unrelated_note" and value == "control":
+                    value = UNRELATED_NOTE
+                plan_error = self._preflight_experiment(action.model_copy(update={"value": value}), target)
+                if plan_error is not None:
+                    self.tools.observations.append(plan_error)
+                    signature = f"invalid:{action.operator}:{plan_error.get('error_code')}:{plan_error.get('value')!r}"
+                    if self._record_no_progress(no_progress_counts, signature, steps_remaining=max_steps - self.tools.budget.investigator_calls, correction=plan_error.get("correction_contract")):
+                        break
+                    continue
                 planned_repetitions = 3
                 if self.tools.budget.target_trials + planned_repetitions > self.tools.budget.max_target_trials - self.validation_reserve_trials:
                     self.tools.observations.append(
@@ -688,21 +948,6 @@ class AdaptiveInvestigator:
                     )
                     self.tools.stop_reason = "validation_handoff"
                     break
-                value = action.value
-                if action.source == "held_out":
-                    target = next((item for item in (held_out_scenarios or []) if isinstance(action.value, str) and item.scenario_id == action.value), None)
-                    if target is None:
-                        self.tools.stop_reason = "inconclusive:held_out_source_unresolved"
-                        self.tools.observations.append({"kind": "stop", "status": "inconclusive", "reason": self.tools.stop_reason})
-                        break
-                else:
-                    target = control if action.source == "control" else scenario
-                if action.operator == "policy_notes" and value == "reviewed_policy":
-                    value = "Refunds are allowed up to 14 days."
-                if action.operator == "remove_note" and value in (None, "obsolete"):
-                    value = OBSOLETE_NOTE
-                if action.operator == "unrelated_note" and value in (None, "control"):
-                    value = UNRELATED_NOTE
                 # Bind every adaptive arm to the original, unchanged fixture.
                 # Intervention runs intentionally retain the scenario ID, so
                 # an ID-only/reversed lookup can silently turn a later arm
@@ -719,18 +964,31 @@ class AdaptiveInvestigator:
                     ),
                     None,
                 )
-                spec = ExperimentSpec(hypothesis_id=action.hypothesis_id or self._active_hypothesis_id(action.operator), name=f"{action.operator}:{value}", operator=action.operator, value=value, source_scenario_id=target.scenario_id, source_run_id=source_run.run_id if source_run else None, source_role=action.source, configuration_id=action.configuration_id, fixture_partition=action.fixture_partition)
+                spec = ExperimentSpec(hypothesis_id=action.hypothesis_id or self._active_hypothesis_id(action.operator), name=f"{action.operator}:{value}", operator=action.operator, value=value, source_scenario_id=target.scenario_id, source_run_id=source_run.run_id if source_run else None, source_role=action.source, configuration_id=action.configuration_id, fixture_partition=action.fixture_partition, rationale=action.rationale)
                 try:
                     all_results.extend(self.tools.run_experiment(spec, target))
                 except RuntimeError:
                     self.tools.observations.append({"kind": "stop", "status": "inconclusive", "reason": self.tools.stop_reason})
                     break
+                no_progress_counts.clear()
                 continue
             if action.kind == "check_suite":
+                before = self._progress_state(self.tools)
                 self.tools.check_suite(self.tools.runs, original_suite_runs=original_suite_runs)
+                if self._progress_state(self.tools) == before:
+                    suite_key = f"check_suite:{len(original_suite_runs if original_suite_runs is not None else self.tools.runs)}"
+                    if self._record_no_progress(
+                        no_progress_counts,
+                        suite_key,
+                        steps_remaining=max_steps - self.tools.budget.investigator_calls,
+                    ):
+                        break
+                else:
+                    no_progress_counts.clear()
                 continue
             if action.kind == "propose_tests":
                 self.tools.propose_tests()
+                no_progress_counts.clear()
                 continue
             self.tools.observations.append({"kind": "unknown_controller_action", "action": action.model_dump(mode="json")})
         if not self.tools.stop_reason:
