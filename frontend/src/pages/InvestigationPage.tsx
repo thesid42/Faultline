@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
+import { CaseEvidenceSummary } from '../components/CaseEvidenceSummary'
 import { displayValue, formatCaseLabel, formatDate, useCase } from '../context/CaseContext'
 
 const tabs = ['overview', 'trace', 'hypotheses', 'experiments', 'coverage', 'regression'] as const
@@ -45,12 +46,17 @@ export function InvestigationPage() {
   const events = rows(sourceRun?.events)
   const hypotheses = rows(caseFile?.hypotheses)
   const experiments = rows(caseFile?.experiment_results)
+  const observations = rows(caseFile?.observations)
   const coverage = rows(caseFile?.coverage)
+  const budget = row(caseFile?.budget)
   const proposal = caseFile?.proposal ? row(caseFile.proposal) : null
   const proposalReviewed = Boolean(proposal?.reviewed === true && typeof proposal.approval_digest === 'string' && proposal.approval_digest && proposal.approval_digest === proposal.digest)
   const selectedEventRow = events[selectedEvent] ?? events[0]
   const title = formatCaseLabel(caseFile?.demo_profile ?? id)
   const status = String(caseFile?.status ?? 'unknown')
+  const latestObservation = observations[observations.length - 1]
+  const stage = typeof latestObservation?.stage === 'string' ? latestObservation.stage : typeof latestObservation?.kind === 'string' ? latestObservation.kind : 'not recorded'
+  const stageStatus = typeof latestObservation?.status === 'string' ? latestObservation.status : null
 
   const experimentCounts = useMemo(() => {
     return experiments.reduce<Record<string, number>>((counts, item) => {
@@ -75,6 +81,7 @@ export function InvestigationPage() {
       <LoadingOrError loading={loading} error={error} />
       {!loading && !error && !caseFile ? <div className="panel empty-state">This case was not found.</div> : null}
       {!loading && !error && caseFile ? <>
+        <CaseEvidenceSummary caseFile={caseFile} />
         <div className="tabs">
           {tabs.map((tab) => <button key={tab} type="button" className={`tab${activeTab === tab ? ' active' : ''}`} onClick={() => setTab(tab)}>{tab.charAt(0).toUpperCase() + tab.slice(1)}</button>)}
         </div>
@@ -100,6 +107,17 @@ export function InvestigationPage() {
                 <div><span>Coverage assessments</span><strong>{coverage.length}</strong></div>
                 <div><span>Regression proposal</span><strong>{proposal ? 'Recorded' : 'Not recorded'}</strong></div>
               </div>
+            </div>
+            <div className="panel">
+              <h2 className="section-title">Investigation progress</h2>
+              <div className="stack-list">
+                <div><span>Case status</span><strong>{status}</strong></div>
+                <div><span>Latest recorded stage</span><strong>{stage}{stageStatus ? ` · ${stageStatus}` : ''}</strong></div>
+                <div><span>Target trials</span><strong>{String(budget.target_trials ?? '—')}</strong></div>
+                <div><span>Investigator calls</span><strong>{String(budget.investigator_calls ?? '—')}</strong></div>
+                <div><span>Jev calls</span><strong>{String(budget.jev_calls ?? '—')}</strong></div>
+              </div>
+              <p className="muted" style={{ marginBottom: 0 }}>Background runs can continue after this tab closes. Stop reason: {caseFile.stop_reason || 'not recorded'}.</p>
             </div>
           </div> : null}
 

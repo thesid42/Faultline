@@ -1261,6 +1261,109 @@ a {
   gap: 8px;
 }
 
+.investigation-dialog {
+  width: min(540px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+
+.investigation-dialog .section-head {
+  align-items: flex-start;
+}
+
+.icon-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dialog-field,
+.dialog-fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 16px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dialog-field select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px 11px;
+  font: inherit;
+  font-weight: 400;
+}
+
+.dialog-fieldset {
+  border: 0;
+  padding: 0;
+}
+
+.dialog-fieldset legend {
+  padding: 0;
+  margin-bottom: 3px;
+}
+
+.dialog-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+  font-weight: 400;
+}
+
+.dialog-choice:has(input:checked) {
+  border-color: var(--primary);
+  background: rgba(88, 101, 242, 0.06);
+}
+
+.dialog-choice span {
+  display: grid;
+  gap: 3px;
+}
+
+.dialog-choice small {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.dialog-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 14px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.capability-note,
+.dialog-loading,
+.dialog-error {
+  margin: 12px 0 16px;
+  padding: 11px 12px;
+  border-radius: 8px;
+  background: var(--bg-app);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.dialog-error {
+  background: #fff1f2;
+  color: #be123c;
+}
+
 .toast-stack {
   position: fixed;
   right: 24px;

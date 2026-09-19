@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FaultlineHeroVisual } from '../components/FaultlineHeroVisual'
 import { IncidentTable } from '../components/IncidentTable'
+import { NewInvestigationDialog } from '../components/NewInvestigationDialog'
 import { useCases, formatCaseLabel } from '../context/CaseContext'
 
 function StateMessage({ children }: { children: ReactNode }) {
@@ -11,6 +12,7 @@ function StateMessage({ children }: { children: ReactNode }) {
 
 export function HomePage() {
   const navigate = useNavigate()
+  const [dialogOpen, setDialogOpen] = useState(false)
   const { cases, loading, error, refreshing } = useCases()
   const latest = cases[cases.length - 1]
   const activeCount = cases.filter((item) => item.status === 'queued' || item.status === 'investigating').length
@@ -32,8 +34,8 @@ export function HomePage() {
             <button type="button" className="btn btn-primary" disabled={!latest} onClick={() => latest && navigate(`/investigations/${latest.caseid}`)}>
               {latest ? 'View latest case' : 'No cases available'}
             </button>
-            <button type="button" className="btn btn-secondary hero-btn-secondary" disabled title="Start investigations from the Faultline CLI.">
-              New investigation (CLI)
+            <button type="button" className="btn btn-secondary hero-btn-secondary" onClick={() => setDialogOpen(true)}>
+              New investigation
             </button>
           </div>
         </div>
@@ -54,6 +56,7 @@ export function HomePage() {
         <IncidentTable incidents={recent.slice(0, 3)} />
         {latest ? <p className="muted" style={{ marginTop: 14 }}>{refreshing ? 'Refreshing… ' : ''}Latest profile: {formatCaseLabel(latest.profile)}</p> : null}
       </> : null}
+      <NewInvestigationDialog open={dialogOpen} onClose={() => setDialogOpen(false)} />
     </div>
   )
 }

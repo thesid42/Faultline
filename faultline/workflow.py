@@ -404,14 +404,14 @@ def _sync_budget_summary(budget: BudgetState, ledger: BudgetLedger | None) -> No
     budget.reserved_usd = snapshot.pending_usd
 
 
-def run_demo(*, live: bool = False, backend: str = "local", jev: bool = False, approve_budget: bool = False, profile: str = "memory-conflict", db: str | Path = "results/faultline.sqlite3", ledger_path: str | Path | None = None, target_model: str | None = None, investigator_model: str | None = None, target: ReturnDesk | None = None, controller: InvestigatorController | None = None, on_progress: Callable[[CaseFile], None] | None = None) -> DemoResult:
+def run_demo(*, live: bool = False, backend: str = "local", jev: bool = False, approve_budget: bool = False, profile: str = "memory-conflict", db: str | Path = "results/faultline.sqlite3", ledger_path: str | Path | None = None, target_model: str | None = None, investigator_model: str | None = None, target: ReturnDesk | None = None, controller: InvestigatorController | None = None, on_progress: Callable[[CaseFile], None] | None = None, case_id: str | None = None) -> DemoResult:
     """Run an offline or explicitly live full investigation."""
     if backend not in {"local", "daytona"}:
         raise ValueError("backend must be local or daytona")
     selected_profile = _resolve_profile(profile)
     config = None
     ledger: BudgetLedger | None = None
-    stable_case_id = uuid4().hex
+    stable_case_id = case_id or uuid4().hex
     daytona_runner: DaytonaRunner | None = None
     injected_live_components = target is not None or controller is not None
     if live:

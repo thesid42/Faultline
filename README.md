@@ -35,18 +35,19 @@ failure is retained and reported as `inconclusive`.
 
 ## Live demo
 
-Copy `.env.example` to `.env`, set credentials, then run one explicit live
-workflow:
+Copy `.env.example` to `.env` only for backend configuration; `.env` contains
+backend-only credentials and is never sent to the browser. The template is
+safe to commit. Use the existing `.venv` for the API and CLI.
 
-### React investigation UI (read-only case data)
+### React investigation UI (bounded launch and case data)
 
-The React UI reads persisted case files through the local read-only API. Start
+The React UI reads persisted case files through the local API; its read
+endpoints are read-only. Start
 the API against the case database you want to review, then start Vite in a
-second PowerShell window. The UI refreshes persisted cases and investigation
-evidence only; it cannot start trials, approve a proposal, or mutate SQLite.
-Refreshing the page rereads the persisted live cases; it performs no model
-calls. Use the CLI against the same `--db` path for a new case or explicit
-human approval/export.
+second PowerShell window. Refreshing the page rereads persisted cases; the
+bounded launch dialog can run the simulated default or an explicitly selected
+live mode advertised by the backend. Credentials remain server-side, and
+approvals/exports remain CLI or review-workflow operations.
 
 The API requires the selected SQLite case database to exist. On a fresh clone,
 create an offline simulated case first (no key or network required), or run
