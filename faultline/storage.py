@@ -45,6 +45,51 @@ class ArtifactStore:
         rows = self.db.execute("SELECT payload FROM artifacts WHERE kind=? ORDER BY created_at", (kind,)).fetchall()
         return [json.loads(row[0]) for row in rows]
 
+    def delete(self, kind: str, artifact_id: str) -> bool:
+        cursor = self.db.execute("DELETE FROM artifacts WHERE kind=? AND artifact_id=?", (kind, artifact_id))
+        self.db.commit()
+        if kind in {"run", "experiment_result", "case_file", "proposal", "coverage"}:
+            path = self.json_root / kind / f"{artifact_id}.json"
+            if path.is_file():
+                path.unlink()
+        return cursor.rowcount > 0
+
+    def delete_case(self, case_id: str) -> bool:
+        """Remove a case file and the child artifacts it references."""
+        case = self.get("case_file", case_id)
+        if case is None:
+            return False
+        targets: list[tuple[str, str]] = [("case_file", case_id)]
+        incident = case.get("incident")
+        if isinstance(incident, dict) and incident.get("incident_id"):
+            targets.append(("incident", str(incident["incident_id"])))
+        for run in case.get("runs") or []:
+            if isinstance(run, dict) and run.get("run_id"):
+                targets.append(("run", str(run["run_id"])))
+        for hypothesis in case.get("hypotheses") or []:
+            if isinstance(hypothesis, dict) and hypothesis.get("hypothesis_id"):
+                targets.append(("hypothesis", str(hypothesis["hypothesis_id"])))
+        for result in case.get("experiment_results") or []:
+            if isinstance(result, dict) and result.get("trial_id"):
+                targets.append(("experiment_result", str(result["trial_id"])))
+        for item in case.get("coverage") or []:
+            if isinstance(item, dict) and item.get("assessment_id"):
+                targets.append(("coverage", str(item["assessment_id"])))
+        proposal = case.get("proposal")
+        if isinstance(proposal, dict) and proposal.get("proposal_id"):
+            targets.append(("proposal", str(proposal["proposal_id"])))
+        for record in self.list("ui_request"):
+            if isinstance(record, dict) and str(record.get("case_id") or "") == case_id and isinstance(record.get("request_id"), str):
+                targets.append(("ui_request", f"ui-request-{record['request_id']}"))
+        seen: set[tuple[str, str]] = set()
+        for kind, artifact_id in targets:
+            key = (kind, artifact_id)
+            if key in seen or not artifact_id:
+                continue
+            seen.add(key)
+            self.delete(kind, artifact_id)
+        return True
+
     def close(self) -> None:
         self.db.close()
 

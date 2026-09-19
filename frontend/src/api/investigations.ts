@@ -77,6 +77,16 @@ export function startInvestigation(payload: StartInvestigationPayload, csrfToken
   })
 }
 
+export function deleteCase(caseId: string, csrfToken: string) {
+  return requestJson<{ deleted: boolean; case_id: string }>(`/api/cases/${encodeURIComponent(caseId)}`, {
+    method: 'DELETE',
+    headers: {
+      Accept: 'application/json',
+      'X-Faultline-Token': csrfToken,
+    },
+  })
+}
+
 export function capabilityOption(value: unknown): { value: string; label: string } | null {
   if (typeof value === 'string' && value) return { value, label: value }
   if (!value || typeof value !== 'object') return null

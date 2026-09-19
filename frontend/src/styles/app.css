@@ -611,6 +611,23 @@ a {
   text-decoration: underline;
 }
 
+.link-btn-danger {
+  color: var(--failure);
+}
+
+.link-btn-danger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: center;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -1540,6 +1557,112 @@ a {
   }
   100% {
     background-position: -100% 0;
+  }
+}
+
+.running-loader {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 16px;
+  padding: 22px 24px;
+  border: 1px solid #d9e2ff;
+  border-radius: var(--radius);
+  background:
+    linear-gradient(135deg, rgba(88, 101, 242, 0.08), rgba(124, 92, 252, 0.04)),
+    var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.running-loader-orbit {
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+}
+
+.running-loader-spinner,
+.status-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid #d7defc;
+  border-top-color: var(--primary);
+  animation: spin 0.85s linear infinite;
+}
+
+.status-spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+
+.running-loader-copy {
+  min-width: 0;
+}
+
+.running-loader-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.running-loader-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 0 rgba(88, 101, 242, 0.45);
+  animation: pulse-dot 1.4s ease-out infinite;
+}
+
+.running-loader-detail {
+  margin: 6px 0 0;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.running-loader-meta {
+  margin: 8px 0 0;
+}
+
+.running-partial {
+  border-style: dashed;
+}
+
+.status-with-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 rgba(88, 101, 242, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(88, 101, 242, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(88, 101, 242, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .running-loader-spinner,
+  .status-spinner,
+  .running-loader-pulse {
+    animation: none;
   }
 }
 

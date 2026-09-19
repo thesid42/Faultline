@@ -1,8 +1,8 @@
 """Local HTTP API for persisted Faultline case files and queued investigations.
 
 GET requests deliberately open the explicitly supplied SQLite database in
-read-only mode. The only mutation endpoint is the bounded, CSRF-guarded
-investigation queue; there are no approval, export, arbitrary command, or
+read-only mode. Mutation endpoints are CSRF-guarded: investigation queue and
+case deletion. There are no approval, export, arbitrary command, or
 client-selected model/path endpoints.
 """
 from __future__ import annotations
@@ -156,18 +156,26 @@ class _APIHandler(BaseHTTPRequestHandler):
             # Do not return database paths, SQL details, or stored payloads.
             self._json(500, {"error": "database_unavailable"})
 
-    def _method_not_allowed(self) -> None:
+    def _method_not_allowed(self, *, allow: str = "GET") -> None:
         self.send_response(405)
-        self.send_header("Allow", "GET")
+        self.send_header("Allow", allow)
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
-        if urlsplit(self.path).path != "/api/investigations":
-            self._method_not_allowed()
-            return
+    def _mutation_guard(self) -> bool:
         if not self._host_allowed() or not self._origin_allowed():
             self._json(403, {"error": "origin_or_host_not_allowed"})
+            return False
+        if not secrets.compare_digest(self.headers.get("X-Faultline-Token", ""), self.server.jobs.csrf_token):
+            self._json(403, {"error": "token_required"})
+            return False
+        return True
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+        if urlsplit(self.path).path != "/api/investigations":
+            self._method_not_allowed(allow="GET, DELETE")
+            return
+        if not self._mutation_guard():
             return
         if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
             self._json(415, {"error": "application_json_required"})
@@ -182,9 +190,6 @@ class _APIHandler(BaseHTTPRequestHandler):
             return
         if length > 4096:
             self._json(413, {"error": "request_too_large"})
-            return
-        if not secrets.compare_digest(self.headers.get("X-Faultline-Token", ""), self.server.jobs.csrf_token):
-            self._json(403, {"error": "token_required"})
             return
         try:
             # Avoid waiting indefinitely for a declared body from a client
@@ -231,13 +236,36 @@ class _APIHandler(BaseHTTPRequestHandler):
         self._json(202, {"case_id": case_id, "status": status})
 
     def do_PUT(self) -> None:  # noqa: N802 - stdlib handler API
-        self._method_not_allowed()
+        self._method_not_allowed(allow="GET, DELETE")
 
     def do_PATCH(self) -> None:  # noqa: N802 - stdlib handler API
-        self._method_not_allowed()
+        self._method_not_allowed(allow="GET, DELETE")
 
     def do_DELETE(self) -> None:  # noqa: N802 - stdlib handler API
-        self._method_not_allowed()
+        route = self._safe_get()
+        if route is None or route[0] != "case" or not route[1]:
+            self._method_not_allowed(allow="GET, POST")
+            return
+        if not self._mutation_guard():
+            return
+        case_id = route[1]
+        if self.server.jobs.active_case_id == case_id:
+            self._json(409, {"error": "investigation_active", "active_case_id": case_id})
+            return
+        try:
+            from .storage import ArtifactStore
+
+            with ArtifactStore(self.server.db_path) as store:
+                deleted = store.delete_case(case_id)
+            if deleted:
+                self.server.jobs.forget_case(case_id)
+        except (OSError, sqlite3.Error, ValueError, TypeError, json.JSONDecodeError):
+            self._json(500, {"error": "database_unavailable"})
+            return
+        if not deleted:
+            self._json(404, {"error": "case_not_found"})
+            return
+        self._json(200, {"deleted": True, "case_id": case_id})
 
     def log_message(self, _format: str, *_args: Any) -> None:
         # Case IDs and query strings are user-controlled; keep the local

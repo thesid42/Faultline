@@ -61,6 +61,13 @@ class InvestigationJobManager:
         with self._lock:
             return self._active_case_id
 
+    def forget_case(self, case_id: str) -> None:
+        """Drop in-memory UI request ownership after a case is deleted."""
+        with self._lock:
+            stale = [request_id for request_id, record in self._records.items() if str(record.get("case_id") or "") == case_id]
+            for request_id in stale:
+                self._records.pop(request_id, None)
+
     def capabilities(self) -> dict[str, Any]:
         config = load_config()
         live_available = bool(config.openrouter_api_key.strip())

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
 import { CaseEvidenceSummary } from '../components/CaseEvidenceSummary'
-import { displayValue, formatDate, shortCaseId, useCase } from '../context/CaseContext'
+import { RunningCaseLoader } from '../components/RunningCaseLoader'
+import { displayValue, formatDate, shortCaseId, useCase, useCases } from '../context/CaseContext'
+import { deleteCase, getCapabilities, InvestigationRequestError } from '../api/investigations'
 import { friendlyCaseTitle, summarizeInvestigation, type InvestigationSummary } from '../lib/investigationSummary'
 
 const tabs = ['overview', 'trace', 'hypotheses', 'experiments', 'coverage', 'regression'] as const
@@ -123,9 +125,13 @@ function ResultsView({ summary, onReviewProposal }: { summary: InvestigationSumm
 
 export function InvestigationPage() {
   const { id } = useParams()
+  const navigate = useNavigate()
+  const { refresh: refreshCases } = useCases()
   const { caseFile, loading, refreshing, error } = useCase(id)
   const [searchParams, setSearchParams] = useSearchParams()
   const [selectedEvent, setSelectedEvent] = useState(0)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const requestedTab = searchParams.get('tab')
   const activeTab: Tab = requestedTab && tabs.includes(requestedTab as Tab) ? requestedTab as Tab : 'overview'
   const [technicalOpen, setTechnicalOpen] = useState(Boolean(requestedTab))
@@ -154,6 +160,8 @@ export function InvestigationPage() {
   const latestObservation = observations[observations.length - 1]
   const stage = typeof latestObservation?.stage === 'string' ? latestObservation.stage : typeof latestObservation?.kind === 'string' ? latestObservation.kind : 'not recorded'
   const stageStatus = typeof latestObservation?.status === 'string' ? latestObservation.status : null
+  const canDelete = Boolean(id && caseFile && status !== 'queued' && status !== 'investigating')
+  const isRunning = status === 'queued' || status === 'investigating'
 
   const experimentCounts = useMemo(() => {
     return experiments.reduce<Record<string, number>>((counts, item) => {
@@ -168,24 +176,76 @@ export function InvestigationPage() {
     setSearchParams({ tab })
   }
 
+  const onDelete = async () => {
+    if (!id || !canDelete || deleting) return
+    const confirmed = window.confirm(`Delete investigation ${shortCaseId(id)}? This removes the saved case and its evidence from the local database.`)
+    if (!confirmed) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      const capabilities = await getCapabilities()
+      if (!capabilities.csrf_token) throw new Error('Delete token unavailable')
+      await deleteCase(id, capabilities.csrf_token)
+      await refreshCases()
+      navigate('/incidents')
+    } catch (cause) {
+      const message = cause instanceof InvestigationRequestError
+        ? cause.message
+        : cause instanceof Error
+          ? cause.message
+          : 'Unable to delete this investigation'
+      setDeleteError(message)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div className="page-shell">
       <PageHeader
         title={friendlyTitle}
         subtitle={headerStatus}
-        actions={<StatusBadge label={headerStatus} tone={tone(status)} />}
+        actions={(
+          <div className="page-header-actions">
+            <StatusBadge label={headerStatus} tone={tone(status)} />
+            {isRunning ? <span className="status-spinner" aria-hidden /> : null}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={!canDelete || deleting}
+              title={canDelete ? 'Delete this saved investigation' : 'Wait for the investigation to finish before deleting.'}
+              onClick={() => void onDelete()}
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </button>
+          </div>
+        )}
       >
         <div className="inv-header-meta">
           <span>{caseFile?.evidence_origin === 'simulated' ? 'Practice evidence' : caseFile?.evidence_origin === 'live' ? 'Live evidence' : 'Evidence origin unknown'}</span>
           <span>·</span>
-          <span>{refreshing ? 'refreshing…' : 'Updates automatically'}</span>
+          <span>{isRunning || refreshing ? 'refreshing…' : 'Updates automatically'}</span>
         </div>
       </PageHeader>
 
       <LoadingOrError loading={loading} error={error} />
+      {deleteError ? <div className="panel empty-state" role="alert"><strong>Delete failed.</strong><br />{deleteError}</div> : null}
       {!loading && !error && !caseFile ? <div className="panel empty-state">This case was not found.</div> : null}
       {!loading && !error && caseFile ? <>
-        {summary ? <ResultsView summary={summary} onReviewProposal={() => setTab('regression')} /> : null}
+        {isRunning ? <RunningCaseLoader status={status} progress={summary?.progress} refreshing={refreshing} /> : null}
+        {!isRunning && summary ? <ResultsView summary={summary} onReviewProposal={() => setTab('regression')} /> : null}
+        {isRunning && summary ? (
+          <div className="panel running-partial" style={{ marginTop: 16 }}>
+            <h2 className="section-title">Evidence so far</h2>
+            <p className="muted">{summary.progress}</p>
+            <div className="case-meta-grid">
+              <div><span className="metric-label">Runs recorded</span><strong>{runs.length}</strong></div>
+              <div><span className="metric-label">Experiments</span><strong>{experiments.length}</strong></div>
+              <div><span className="metric-label">Possible causes</span><strong>{hypotheses.length}</strong></div>
+              <div><span className="metric-label">Latest stage</span><strong>{stage}{stageStatus ? ` · ${stageStatus}` : ''}</strong></div>
+            </div>
+          </div>
+        ) : null}
         <details className="panel" open={technicalOpen} onToggle={(event) => setTechnicalOpen(event.currentTarget.open)} style={{ marginTop: 16 }}>
           <summary className="section-title" style={{ cursor: 'pointer' }}>Technical details</summary>
           <CaseEvidenceSummary caseFile={caseFile} />
